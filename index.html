@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Airbnb Price Recommendation</title>
+    <title>Listing Price Recommendation</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
         }
-        #map {
+        #map, #result-map {
             height: 400px;
             width: 100%;
             border: 1px solid #ccc;
@@ -36,7 +36,7 @@
             width: 150px;
             margin: 10px 0;
         }
-        form input[type="text"], form input[type="number"], form textarea {
+        form select, form input[type="number"], form textarea {
             width: 200px;
             padding: 5px;
         }
@@ -60,47 +60,17 @@
         button:hover {
             background-color: #45a049;
         }
-        .autocomplete {
-            position: relative;
-            display: inline-block;
-        }
-        .autocomplete input {
-            border: 1px solid #ccc;
-            padding: 5px;
-        }
-        .autocomplete-list {
-            position: absolute;
-            border: 1px solid #ccc;
-            background: white;
-            z-index: 1000;
-            max-height: 150px;
-            overflow-y: auto;
-            width: 100%;
-        }
-        .autocomplete-list div {
-            padding: 5px;
-            cursor: pointer;
-        }
-        .autocomplete-list div:hover {
-            background-color: #f0f0f0;
-        }
     </style>
 </head>
 <body>
-    <h1>Airbnb Price Recommendation</h1>
+    <h1>Listing Price Recommendation</h1>
     <div id="input-section">
         <h2>Enter Your Listing Details</h2>
         <form id="listing-form">
             <label for="property_type">Property Type:</label>
-            <div class="autocomplete">
-                <input type="text" id="property_type" name="property_type" required>
-                <div id="property_type_list" class="autocomplete-list"></div>
-            </div><br>
+            <select id="property_type" name="property_type" required></select><br>
             <label for="room_type">Room Type:</label>
-            <div class="autocomplete">
-                <input type="text" id="room_type" name="room_type" required>
-                <div id="room_type_list" class="autocomplete-list"></div>
-            </div><br>
+            <select id="room_type" name="room_type" required></select><br>
             <label for="accommodates">Accommodates:</label>
             <input type="number" id="accommodates" name="accommodates" min="1" required><br>
             <label for="bathrooms">Bathrooms:</label>
@@ -124,6 +94,9 @@
     <div id="results">
         <h2>Recommended Price Range</h2>
         <p id="recommendation"></p>
+        <h2>Top 5 Similar Listings and Closest POIs</h2>
+        <div id="result-map"></div>
+        <button id="back">Back</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
@@ -137,6 +110,7 @@
         let uniquePoiTypes = [];
         let userLocation = null;
         let marker = null;
+        let resultMap = null;
 
         // Load data from CSV files
         Papa.parse('data/osm_nodes.csv', {
@@ -166,8 +140,7 @@
                 });
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
-                setupAutocomplete('property_type', uniquePropertyTypes);
-                setupAutocomplete('room_type', uniqueRoomTypes);
+                populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
@@ -175,28 +148,22 @@
             }
         });
 
-        // Setup autocomplete for property_type and room_type
-        function setupAutocomplete(id, options) {
-            const input = document.getElementById(id);
-            const list = document.getElementById(id + '_list');
-            input.addEventListener('input', function() {
-                const val = this.value.toLowerCase();
-                list.innerHTML = '';
-                if (!val) return;
-                options.forEach(option => {
-                    if (option.toLowerCase().startsWith(val)) {
-                        const div = document.createElement('div');
-                        div.textContent = option;
-                        div.addEventListener('click', function() {
-                            input.value = option;
-                            list.innerHTML = '';
-                        });
-                        list.appendChild(div);
-                    }
-                });
+        // Populate dropdowns with unique values
+        function populateDropdowns() {
+            const propertyTypeSelect = document.getElementById('property_type');
+            uniquePropertyTypes.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                propertyTypeSelect.appendChild(option);
             });
-            document.addEventListener('click', function(e) {
-                if (e.target !== input) list.innerHTML = '';
+
+            const roomTypeSelect = document.getElementById('room_type');
+            uniqueRoomTypes.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                roomTypeSelect.appendChild(option);
             });
         }
 
@@ -219,7 +186,7 @@
             });
         }
 
-        // Initialize interactive map
+        // Initialize interactive map for input
         const map = L.map('map').setView([40.7128, -74.0060], 12); // Center on NYC
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
@@ -250,7 +217,7 @@
             setTimeout(computeRecommendation, 100); // Allow UI to update
         });
 
-        // Compute price recommendation with time estimation
+        // Compute price recommendation and generate map
         function computeRecommendation() {
             const startTime = performance.now();
             const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
@@ -291,24 +258,109 @@
             const similarListings = findSimilarListings(userListing, airbnbListings, topN);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
+            const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i] }))
+                .sort((a, b) => b.score - a.score);
+            const top5Listings = rankedListings.slice(0, 5).map(r => r.listing);
+
             const recommendedPrice = computeWeightedAveragePrice(similarListings, scores);
             const prices = similarListings.map(l => l.price);
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
 
-            const endTime = performance.now();
-            console.log(`Actual computation time: ${((endTime - startTime) / 1000).toFixed(2)} seconds`);
-
             document.getElementById('loading').style.display = 'none';
             document.getElementById('results').style.display = 'block';
             document.getElementById('recommendation').textContent = 
                 `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})`;
+
+            // Initialize result map
+            if (!resultMap) {
+                resultMap = L.map('result-map').setView([lat, lon], 13);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(resultMap);
+            } else {
+                resultMap.setView([lat, lon], 13);
+            }
+
+            // Clear previous layers
+            resultMap.eachLayer(layer => {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.CircleMarker) {
+                    resultMap.removeLayer(layer);
+                }
+            });
+
+            // Add user location marker
+            L.marker([lat, lon]).addTo(resultMap);
+
+            // Get top 5 most important POI types
+            const top5PoiTypes = Object.entries(poiRatings)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 5)
+                .map(entry => entry[0]);
+
+            // Add top 5 listings and connections
+            top5Listings.forEach(listing => {
+                const listingLat = listing.latitude;
+                const listingLon = listing.longitude;
+
+                // Add listing marker
+                L.marker([listingLat, listingLon]).addTo(resultMap);
+
+                // Add solid line to user location
+                L.polyline([[lat, lon], [listingLat, listingLon]], {
+                    color: 'blue',
+                    weight: 3,
+                    opacity: 0.7
+                }).addTo(resultMap);
+
+                // For each top POI type, find the closest POI and add dashed line
+                top5PoiTypes.forEach(type => {
+                    const pois = osmNodes.filter(node => node.nodetype === type);
+                    if (pois.length === 0) return;
+
+                    let closestPoi = null;
+                    let minDistance = Infinity;
+                    pois.forEach(poi => {
+                        const poiLat = parseFloat(poi.lat);
+                        const poiLon = parseFloat(poi.lon);
+                        const distance = haversineDistance(listingLat, listingLon, poiLat, poiLon);
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            closestPoi = [poiLat, poiLon];
+                        }
+                    });
+
+                    if (closestPoi) {
+                        // Add thin dashed line to closest POI
+                        L.polyline([[listingLat, listingLon], closestPoi], {
+                            color: 'gray',
+                            weight: 1,
+                            opacity: 0.5,
+                            dashArray: '5, 10'
+                        }).addTo(resultMap);
+
+                        // Add dot at POI location
+                        L.circleMarker(closestPoi, {
+                            radius: 3,
+                            color: 'black',
+                            fillColor: 'black',
+                            fillOpacity: 1
+                        }).addTo(resultMap);
+                    }
+                });
+            });
         }
+
+        // Handle back button click
+        document.getElementById('back').addEventListener('click', function() {
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('input-section').style.display = 'block';
+        });
 
         // Estimate computation time
         function estimateComputationTime(numListings, numNodes) {
-            const timePerListing = 0.0005; // seconds per listing
-            const timePerNode = 0.00001; // seconds per node
+            const timePerListing = 0.0005;
+            const timePerNode = 0.00001;
             return (numListings * timePerListing + numListings * numNodes * timePerNode).toFixed(2);
         }
 
@@ -319,7 +371,7 @@
 
         // Find similar listings
         function findSimilarListings(userListing, airbnbListings, topN) {
-            const sigma = 1000; // Distance decay parameter in meters
+            const sigma = 1000;
             const similarities = airbnbListings.map(listing => {
                 const propertyTypeMatch = userListing.property_type === listing.property_type ? 1 : 0;
                 const roomTypeMatch = userListing.room_type === listing.room_type ? 1 : 0;
@@ -357,7 +409,7 @@
 
         // Haversine distance
         function haversineDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371000; // Earth radius in meters
+            const R = 6371000;
             const phi1 = lat1 * Math.PI / 180;
             const phi2 = lat2 * Math.PI / 180;
             const deltaPhi = (lat2 - lat1) * Math.PI / 180;
