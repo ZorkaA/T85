@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Listing Price Recommendation</title>
+    <title>Airbnb Price Recommendation</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
         }
-        #map, #result-map {
+        #map, #results-map {
             height: 400px;
             width: 100%;
             border: 1px solid #ccc;
@@ -63,7 +63,7 @@
     </style>
 </head>
 <body>
-    <h1>Listing Price Recommendation</h1>
+    <h1>Airbnb Price Recommendation</h1>
     <div id="input-section">
         <h2>Enter Your Listing Details</h2>
         <form id="listing-form">
@@ -94,8 +94,8 @@
     <div id="results">
         <h2>Recommended Price Range</h2>
         <p id="recommendation"></p>
-        <h2>Top 5 Similar Listings and Closest POIs</h2>
-        <div id="result-map"></div>
+        <h2>Map of Top 5 Similar Listings</h2>
+        <div id="results-map"></div>
         <button id="back">Back</button>
     </div>
 
@@ -110,7 +110,7 @@
         let uniquePoiTypes = [];
         let userLocation = null;
         let marker = null;
-        let resultMap = null;
+        let resultsMap = null;
 
         // Load data from CSV files
         Papa.parse('data/osm_nodes.csv', {
@@ -120,10 +120,6 @@
                 osmNodes = results.data;
                 uniquePoiTypes = [...new Set(osmNodes.map(node => node.nodetype))];
                 generatePoiSliders();
-            },
-            error: function(error) {
-                console.error('Error loading osm_nodes.csv:', error);
-                alert('Failed to load POI data.');
             }
         });
 
@@ -141,14 +137,10 @@
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
                 populateDropdowns();
-            },
-            error: function(error) {
-                console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load Airbnb listings data.');
             }
         });
 
-        // Populate dropdowns with unique values
+        // Populate dropdowns
         function populateDropdowns() {
             const propertyTypeSelect = document.getElementById('property_type');
             uniquePropertyTypes.forEach(type => {
@@ -167,7 +159,7 @@
             });
         }
 
-        // Generate sliders for POI importance
+        // Generate POI sliders
         function generatePoiSliders() {
             const slidersDiv = document.getElementById('poi-sliders');
             uniquePoiTypes.forEach(type => {
@@ -186,10 +178,10 @@
             });
         }
 
-        // Initialize interactive map for input
-        const map = L.map('map').setView([40.7128, -74.0060], 12); // Center on NYC
+        // Initialize input map
+        const map = L.map('map').setView([40.7128, -74.0060], 12); // NYC
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         }).addTo(map);
 
         map.on('click', function(e) {
@@ -201,29 +193,30 @@
             userLocation = e.latlng;
         });
 
-        // Handle proceed button click
+        // Proceed button handler
         document.getElementById('proceed').addEventListener('click', function() {
             const form = document.getElementById('listing-form');
-            if (!form.checkValidity()) {
-                alert('Please fill in all required fields.');
-                return;
-            }
-            if (!userLocation) {
-                alert('Please select a location on the map.');
+            if (!form.checkValidity() || !userLocation) {
+                alert('Please fill in all fields and select a location.');
                 return;
             }
             document.getElementById('input-section').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
-            setTimeout(computeRecommendation, 100); // Allow UI to update
+            setTimeout(computeRecommendation, 100);
         });
 
-        // Compute price recommendation and generate map
-        function computeRecommendation() {
-            const startTime = performance.now();
-            const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
-            updateTimeRemaining(timeEstimate);
+        // Back button handler
+        document.getElementById('back').addEventListener('click', function() {
+            document.getElementById('results').style.display = 'none';
+            document.getElementById('input-section').style.display = 'block';
+            if (resultsMap) {
+                resultsMap.remove();
+                resultsMap = null;
+            }
+        });
 
-            // Collect user input
+        // Compute recommendation and generate map
+        function computeRecommendation() {
             const propertyType = document.getElementById('property_type').value;
             const roomType = document.getElementById('room_type').value;
             const accommodates = parseInt(document.getElementById('accommodates').value);
@@ -236,137 +229,37 @@
 
             const poiRatings = {};
             uniquePoiTypes.forEach(type => {
-                const slider = document.querySelector(`input[name="${type}"]`);
-                poiRatings[type] = parseInt(slider.value);
+                poiRatings[type] = parseInt(document.querySelector(`input[name="${type}"]`).value);
             });
 
-            const userListing = {
-                property_type: propertyType,
-                room_type: roomType,
-                accommodates: accommodates,
-                bathrooms: bathrooms,
-                bedrooms: bedrooms,
-                beds: beds,
-                amenities: amenities,
-                lat: lat,
-                lon: lon
-            };
-
-            const topN = 20; // Number of similar listings
-            const radius = 1000; // Radius in meters for POI counting
+            const userListing = { property_type: propertyType, room_type: roomType, accommodates, bathrooms, bedrooms, beds, amenities, lat, lon };
+            const topN = 20;
+            const radius = 1000;
 
             const similarListings = findSimilarListings(userListing, airbnbListings, topN);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
-            const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i] }))
-                .sort((a, b) => b.score - a.score);
-            const top5Listings = rankedListings.slice(0, 5).map(r => r.listing);
 
-            const recommendedPrice = computeWeightedAveragePrice(similarListings, scores);
-            const prices = similarListings.map(l => l.price);
+            const rankedListings = similarListings.map((listing, i) => ({
+                listing,
+                score: scores[i],
+                metrics: poiMetrics[i].metrics
+            })).sort((a, b) => b.score - a.score);
+
+            const recommendedPrice = computeWeightedAveragePrice(rankedListings.map(r => r.listing), rankedListings.map(r => r.score));
+            const prices = rankedListings.map(r => r.listing.price);
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
+
+            const top5Listings = rankedListings.slice(0, 5);
+            const sortedPoiTypes = uniquePoiTypes.sort((a, b) => poiRatings[b] - poiRatings[a]).slice(0, 5);
+
+            generateResultsMap(top5Listings, sortedPoiTypes, userListing);
 
             document.getElementById('loading').style.display = 'none';
             document.getElementById('results').style.display = 'block';
             document.getElementById('recommendation').textContent = 
                 `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})`;
-
-            // Initialize result map
-            if (!resultMap) {
-                resultMap = L.map('result-map').setView([lat, lon], 13);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                }).addTo(resultMap);
-            } else {
-                resultMap.setView([lat, lon], 13);
-            }
-
-            // Clear previous layers
-            resultMap.eachLayer(layer => {
-                if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.CircleMarker) {
-                    resultMap.removeLayer(layer);
-                }
-            });
-
-            // Add user location marker
-            L.marker([lat, lon]).addTo(resultMap);
-
-            // Get top 5 most important POI types
-            const top5PoiTypes = Object.entries(poiRatings)
-                .sort((a, b) => b[1] - a[1])
-                .slice(0, 5)
-                .map(entry => entry[0]);
-
-            // Add top 5 listings and connections
-            top5Listings.forEach(listing => {
-                const listingLat = listing.latitude;
-                const listingLon = listing.longitude;
-
-                // Add listing marker
-                L.marker([listingLat, listingLon]).addTo(resultMap);
-
-                // Add solid line to user location
-                L.polyline([[lat, lon], [listingLat, listingLon]], {
-                    color: 'blue',
-                    weight: 3,
-                    opacity: 0.7
-                }).addTo(resultMap);
-
-                // For each top POI type, find the closest POI and add dashed line
-                top5PoiTypes.forEach(type => {
-                    const pois = osmNodes.filter(node => node.nodetype === type);
-                    if (pois.length === 0) return;
-
-                    let closestPoi = null;
-                    let minDistance = Infinity;
-                    pois.forEach(poi => {
-                        const poiLat = parseFloat(poi.lat);
-                        const poiLon = parseFloat(poi.lon);
-                        const distance = haversineDistance(listingLat, listingLon, poiLat, poiLon);
-                        if (distance < minDistance) {
-                            minDistance = distance;
-                            closestPoi = [poiLat, poiLon];
-                        }
-                    });
-
-                    if (closestPoi) {
-                        // Add thin dashed line to closest POI
-                        L.polyline([[listingLat, listingLon], closestPoi], {
-                            color: 'gray',
-                            weight: 1,
-                            opacity: 0.5,
-                            dashArray: '5, 10'
-                        }).addTo(resultMap);
-
-                        // Add dot at POI location
-                        L.circleMarker(closestPoi, {
-                            radius: 3,
-                            color: 'black',
-                            fillColor: 'black',
-                            fillOpacity: 1
-                        }).addTo(resultMap);
-                    }
-                });
-            });
-        }
-
-        // Handle back button click
-        document.getElementById('back').addEventListener('click', function() {
-            document.getElementById('results').style.display = 'none';
-            document.getElementById('input-section').style.display = 'block';
-        });
-
-        // Estimate computation time
-        function estimateComputationTime(numListings, numNodes) {
-            const timePerListing = 0.0005;
-            const timePerNode = 0.00001;
-            return (numListings * timePerListing + numListings * numNodes * timePerNode).toFixed(2);
-        }
-
-        // Update time remaining display
-        function updateTimeRemaining(estimate) {
-            document.getElementById('time-remaining').textContent = `Estimated time remaining: ${estimate} seconds`;
         }
 
         // Find similar listings
@@ -400,7 +293,7 @@
             return similarities.slice(0, topN).map(s => s.listing);
         }
 
-        // Jaccard similarity for amenities
+        // Jaccard similarity
         function jaccardSimilarity(setA, setB) {
             const intersection = setA.filter(x => setB.includes(x));
             const union = [...new Set([...setA, ...setB])];
@@ -436,44 +329,41 @@
                 uniquePoiTypes.forEach(type => {
                     const pois = poiByType[type] || [];
                     let minDistance = Infinity;
-                    let countWithinRadius = 0;
+                    let closestPoi = null;
                     pois.forEach(poi => {
                         const distance = haversineDistance(lat, lon, poi[0], poi[1]);
-                        minDistance = Math.min(minDistance, distance);
-                        if (distance <= radius) countWithinRadius++;
+                        if (distance < minDistance) {
+                            minDistance = distance;
+                            closestPoi = poi;
+                        }
                     });
                     listingMetrics[type] = { 
                         minDistance: isFinite(minDistance) ? minDistance : radius, 
-                        countWithinRadius 
+                        closestPoi: closestPoi
                     };
                 });
                 return { listing, metrics: listingMetrics };
             });
         }
 
-        // Compute scores based on POI metrics and ratings
+        // Compute scores
         function computeScores(poiMetrics, poiRatings) {
             const typeMetrics = {};
             uniquePoiTypes.forEach(type => {
                 const distances = poiMetrics.map(m => m.metrics[type].minDistance);
-                const counts = poiMetrics.map(m => m.metrics[type].countWithinRadius);
                 const minDist = Math.min(...distances);
                 const maxDist = Math.max(...distances);
-                const minCount = Math.min(...counts);
-                const maxCount = Math.max(...counts);
-                typeMetrics[type] = { minDist, maxDist, minCount, maxCount };
+                typeMetrics[type] = { minDist, maxDist };
             });
 
             return poiMetrics.map(m => {
                 let score = 0;
                 uniquePoiTypes.forEach(type => {
-                    const { minDistance, countWithinRadius } = m.metrics[type];
-                    const { minDist, maxDist, minCount, maxCount } = typeMetrics[type];
+                    const { minDistance } = m.metrics[type];
+                    const { minDist, maxDist } = typeMetrics[type];
                     let normDistance = maxDist > minDist ? 
                         (maxDist - minDistance) / (maxDist - minDist) : 1;
-                    let normCount = maxCount > minCount ? 
-                        (countWithinRadius - minCount) / (maxCount - minCount) : 1;
-                    score += poiRatings[type] * (normDistance + normCount);
+                    score += poiRatings[type] * normDistance;
                 });
                 return score;
             });
@@ -488,6 +378,37 @@
                 weightSum += scores[i];
             });
             return weightSum > 0 ? total / weightSum : 0;
+        }
+
+        // Generate results map
+        function generateResultsMap(top5Listings, top5PoiTypes, userListing) {
+            resultsMap = L.map('results-map').setView([userListing.lat, userListing.lon], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+            }).addTo(resultsMap);
+
+            L.marker([userListing.lat, userListing.lon]).addTo(resultsMap);
+
+            top5Listings.forEach(r => {
+                const listing = r.listing;
+                L.marker([listing.latitude, listing.longitude]).addTo(resultsMap);
+                L.polyline([[listing.latitude, listing.longitude], [userListing.lat, userListing.lon]], {
+                    color: 'blue',
+                    weight: 3
+                }).addTo(resultsMap);
+
+                top5PoiTypes.forEach(type => {
+                    const closestPoi = r.metrics[type].closestPoi;
+                    if (closestPoi) {
+                        L.polyline([[listing.latitude, listing.longitude], closestPoi], {
+                            color: 'gray',
+                            weight: 1,
+                            dashArray: '5, 10'
+                        }).addTo(resultsMap);
+                        L.circleMarker(closestPoi, { radius: 3, color: 'red' }).addTo(resultsMap);
+                    }
+                });
+            });
         }
     </script>
 </body>
