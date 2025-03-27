@@ -67,11 +67,14 @@
         button:hover {
             background-color: #45a049;
         }
-        #result-map {
+        #result-map, #heatmap-map {
             height: 400px;
             width: 100%;
             margin-top: 20px;
             border: 1px solid #ccc;
+        }
+        #heatmap-map {
+            display: none;
         }
         table {
             width: 100%;
@@ -104,13 +107,14 @@
             margin: 0;
             -webkit-appearance: none;
             background: transparent;
+            z-index: 2;
         }
         .range-slider input[type="range"]:focus {
             outline: none;
         }
         .range-slider input[type="range"]::-webkit-slider-runnable-track {
             height: 5px;
-            background: #ddd;
+            background: transparent;
             border-radius: 3px;
         }
         .range-slider input[type="range"]::-webkit-slider-thumb {
@@ -129,6 +133,7 @@
             top: 7px;
             width: 100%;
             border-radius: 3px;
+            z-index: 1;
         }
         .range-fill {
             position: absolute;
@@ -136,11 +141,21 @@
             background: #4CAF50;
             top: 7px;
             border-radius: 3px;
+            z-index: 1;
         }
         .slider-values span {
-            width: 40px;
+            min-width: 40px;
             text-align: center;
             font-size: 14px;
+        }
+        .heatmap-scale {
+            display: flex;
+            width: 200px;
+            height: 20px;
+            margin-top: 10px;
+        }
+        .heatmap-scale div {
+            flex: 1;
         }
     </style>
 </head>
@@ -189,7 +204,7 @@
         <p id="recommendation"></p>
         <h3>Top 5 Similar Listings and Nearest POIs</h3>
         <div id="result-map"></div>
-        <h3>Top 10 Similar Listings</h3>
+        <h3>Top 20 Similar Listings</h3>
         <table id="top-listings-table">
             <thead>
                 <tr>
@@ -203,9 +218,13 @@
         </table>
         <button id="back">Back</button>
         <button id="download">Download Full Ranking</button>
+        <button id="show-heatmap">Show Price Heatmap</button>
+        <div id="heatmap-map"></div>
+        <div id="heatmap-scale" class="heatmap-scale"></div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script>
         // Global variables
@@ -217,6 +236,7 @@
         let userLocation = null;
         let marker = null;
         let resultMap = null;
+        let heatmapMap = null;
 
         // Load data from CSV files
         Papa.parse('data/osm_nodes.csv', {
@@ -368,6 +388,7 @@
         document.getElementById('back').addEventListener('click', function() {
             document.getElementById('results').style.display = 'none';
             document.getElementById('input-section').style.display = 'block';
+            document.getElementById('heatmap-map').style.display = 'none';
         });
 
         // Handle download button click
@@ -380,6 +401,12 @@
             a.download = 'top_listings_with_poi_metrics.csv';
             a.click();
             URL.revokeObjectURL(url);
+        });
+
+        // Handle heatmap toggle
+        document.getElementById('show-heatmap').addEventListener('click', function() {
+            const heatmapDiv = document.getElementById('heatmap-map');
+            heatmapDiv.style.display = heatmapDiv.style.display === 'none' ? 'block' : 'none';
         });
 
         // Compute price recommendation
@@ -532,10 +559,10 @@
                 });
             });
 
-            // Populate table with top 10 listings
+            // Populate table with top 20 listings
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
-            rankedListings.slice(0, 10).forEach(r => {
+            rankedListings.slice(0, 20).forEach(r => {
                 const distance = haversineDistance(lat, lon, r.listing.latitude, r.listing.longitude) / 1609.34; // Convert to miles
                 const row = document.createElement('tr');
                 row.innerHTML = `
@@ -546,6 +573,39 @@
                 `;
                 tableBody.appendChild(row);
             });
+
+            // Initialize heatmap map
+            if (!heatmapMap) {
+                heatmapMap = L.map('heatmap-map').setView([lat, lon], 12);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                }).addTo(heatmapMap);
+
+                const maxPrice = Math.max(...airbnbListings.map(l => l.price));
+                const heatData = airbnbListings.map(listing => [
+                    listing.latitude,
+                    listing.longitude,
+                    listing.price / maxPrice // Normalize to 0-1
+                ]);
+
+                L.heatLayer(heatData, {
+                    radius: 25,
+                    blur: 15,
+                    maxZoom: 17,
+                    gradient: { 0.4: 'blue', 0.65: 'yellow', 1: 'red' }
+                }).addTo(heatmapMap);
+
+                // Create heatmap scale
+                const scale = document.getElementById('heatmap-scale');
+                scale.innerHTML = '';
+                const colors = ['blue', 'yellow', 'red'];
+                colors.forEach(color => {
+                    const div = document.createElement('div');
+                    div.style.backgroundColor = color;
+                    scale.appendChild(div);
+                });
+                scale.insertAdjacentHTML('afterend', `<p>Price: $0 - $${maxPrice.toFixed(2)}</p>`);
+            }
 
             // Store top 200 for download
             window.top200Listings = top200Listings;
@@ -592,9 +652,8 @@
             document.getElementById('time-remaining').textContent = `Estimated time remaining: ${estimate} seconds`;
         }
 
-        // Find similar listings
+        // Find similar listings with heavy distance weighting
         function findSimilarListings(userListing, airbnbListings) {
-            const sigma = 1000; // Distance decay parameter in meters
             const similarities = airbnbListings.map(listing => {
                 const propertyTypeSimilarity = stringSimilarity(userListing.property_type, listing.property_type);
                 const roomTypeSimilarity = stringSimilarity(userListing.room_type, listing.room_type);
@@ -606,9 +665,8 @@
                 const maxNightsDiff = Math.abs(userListing.max_nights - listing.max_nights);
                 const amenitiesSimilarity = jaccardSimilarity(userListing.amenities, listing.amenities);
                 const distance = haversineDistance(userListing.lat, userListing.lon, listing.latitude, listing.longitude);
-                const distanceSimilarity = Math.exp(-distance / sigma);
 
-                const similarity = 
+                const baseSimilarity = 
                     2 * propertyTypeSimilarity + 
                     2 * roomTypeSimilarity +
                     1 / (1 + accommodatesDiff) + 
@@ -617,8 +675,9 @@
                     1 / (1 + bedsDiff) +
                     1 / (1 + minNightsDiff) +
                     1 / (1 + maxNightsDiff) +
-                    1 * amenitiesSimilarity + 
-                    2 * distanceSimilarity;
+                    1 * amenitiesSimilarity;
+
+                const similarity = baseSimilarity * (1 / (1 + distance / 100)); // Heavily weigh closer distances
 
                 return { listing, similarity };
             });
