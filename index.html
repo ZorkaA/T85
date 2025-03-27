@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Listing Price Recommendation</title>
+    <title>Airbnb Price Recommendation</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         body {
@@ -44,6 +44,11 @@
             height: 100px;
             vertical-align: top;
         }
+        #poi-sliders {
+            display: grid;
+            grid-template-columns: 200px 200px;
+            gap: 10px;
+        }
         #poi-sliders label {
             width: 200px;
         }
@@ -56,6 +61,7 @@
             color: white;
             border: none;
             cursor: pointer;
+            margin-right: 10px;
         }
         button:hover {
             background-color: #45a049;
@@ -66,10 +72,22 @@
             margin-top: 20px;
             border: 1px solid #ccc;
         }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        table, th, td {
+            border: 1px solid #ccc;
+        }
+        th, td {
+            padding: 8px;
+            text-align: left;
+        }
     </style>
 </head>
 <body>
-    <h1>Listing Price Recommendation</h1>
+    <h1>Airbnb Price Recommendation</h1>
     <div id="input-section">
         <h2>Enter Your Listing Details</h2>
         <form id="listing-form">
@@ -87,6 +105,10 @@
             <input type="number" id="beds" name="beds" min="0" required><br>
             <label for="amenities">Amenities (comma-separated):</label>
             <textarea id="amenities" name="amenities" required></textarea><br>
+            <label for="min_nights">Min Nights:</label>
+            <input type="number" id="min_nights" name="min_nights" min="1" max="365" required><br>
+            <label for="max_nights">Max Nights:</label>
+            <input type="number" id="max_nights" name="max_nights" min="1" max="365" required><br>
         </form>
         <h2>Select Your Location</h2>
         <div id="map"></div>
@@ -102,7 +124,26 @@
         <p id="recommendation"></p>
         <h3>Top 5 Similar Listings and Nearest POIs</h3>
         <div id="result-map"></div>
+        <h3>Top 10 Similar Listings</h3>
+        <table id="top-listings-table">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Property Type</th>
+                    <th>Room Type</th>
+                    <th>Accommodates</th>
+                    <th>Bathrooms</th>
+                    <th>Bedrooms</th>
+                    <th>Beds</th>
+                    <th>Price</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
         <button id="back">Back</button>
+        <button id="download">Download Full Ranking</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
@@ -138,10 +179,12 @@
             header: true,
             complete: function(results) {
                 airbnbListings = results.data.map(listing => {
-                    listing.amenities = JSON.parse(listing.amenities);
+                    listing.amenities = JSON.parse(listing.amenities).map(a => normalizeAmenity(a));
                     listing.price = parseFloat(listing.price.replace('$', '').replace(',', ''));
                     listing.latitude = parseFloat(listing.latitude);
                     listing.longitude = parseFloat(listing.longitude);
+                    listing.min_nights = parseInt(listing.minimum_nights);
+                    listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
                 });
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
@@ -153,6 +196,11 @@
                 alert('Failed to load Airbnb listings data.');
             }
         });
+
+        // Normalize amenity strings
+        function normalizeAmenity(amenity) {
+            return amenity.toLowerCase().replace(/\s+/g, '');
+        }
 
         // Populate dropdowns with unique values
         function populateDropdowns() {
@@ -188,7 +236,6 @@
                 slider.name = type;
                 slidersDiv.appendChild(label);
                 slidersDiv.appendChild(slider);
-                slidersDiv.appendChild(document.createElement('br'));
             });
         }
 
@@ -229,6 +276,18 @@
             document.getElementById('input-section').style.display = 'block';
         });
 
+        // Handle download button click
+        document.getElementById('download').addEventListener('click', function() {
+            const csvContent = generateCsvContent();
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'top_listings_with_poi_metrics.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
         // Compute price recommendation
         function computeRecommendation() {
             const startTime = performance.now();
@@ -242,7 +301,9 @@
             const bathrooms = parseFloat(document.getElementById('bathrooms').value);
             const bedrooms = parseInt(document.getElementById('bedrooms').value);
             const beds = parseInt(document.getElementById('beds').value);
-            const amenities = document.getElementById('amenities').value.split(',').map(a => a.trim());
+            const amenities = document.getElementById('amenities').value.split(',').map(a => normalizeAmenity(a.trim()));
+            const minNights = parseInt(document.getElementById('min_nights').value);
+            const maxNights = parseInt(document.getElementById('max_nights').value);
             const lat = userLocation.lat;
             const lon = userLocation.lng;
 
@@ -260,24 +321,32 @@
                 bedrooms: bedrooms,
                 beds: beds,
                 amenities: amenities,
+                min_nights: minNights,
+                max_nights: maxNights,
                 lat: lat,
                 lon: lon
             };
 
-            const topN = 20; // Number of similar listings
-            const radius = 1000; // Radius in meters for POI counting
+            const topNVector = 500; // Top 500 in vector similarity phase
+            const topNPoi = 100; // Top 100 in POI similarity phase
+            const radius = 8046.72; // 5 miles in meters
 
-            const similarListings = findSimilarListings(userListing, airbnbListings, topN);
+            const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
-            const recommendedPrice = computeWeightedAveragePrice(similarListings, scores);
-            const prices = similarListings.map(l => l.price);
+
+            // Select top 100 based on POI scores
+            const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
+            rankedListings.sort((a, b) => b.score - a.score);
+            const top100Listings = rankedListings.slice(0, topNPoi);
+
+            // Compute weighted average price using top 100
+            const recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
+            const prices = top100Listings.map(r => r.listing.price);
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
 
-            // Get top 5 listings based on scores
-            const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i] }));
-            rankedListings.sort((a, b) => b.score - a.score);
+            // Get top 5 for visualization
             const top5Listings = rankedListings.slice(0, 5).map(r => r.listing);
 
             // Get top 5 most important POI types
@@ -324,7 +393,7 @@
                     opacity: 0.7
                 }).addTo(resultMap);
 
-                // Add dashed lines to closest POIs of top 5 types
+                // Add solid lines to closest POIs of top 5 types
                 top5PoiTypes.forEach(type => {
                     const pois = osmNodes.filter(node => node.nodetype === type)
                         .map(node => [parseFloat(node.lat), parseFloat(node.lon)]);
@@ -338,11 +407,10 @@
                                 closestPoi = poi;
                             }
                         });
-                        // Add dashed line to closest POI
+                        // Add solid line to closest POI
                         L.polyline([[listingLat, listingLon], closestPoi], {
-                            color: 'gray',
+                            color: 'blue',
                             weight: 2,
-                            dashArray: '5, 10',
                             opacity: 0.5
                         }).addTo(resultMap);
                         // Add dot for POI
@@ -355,6 +423,58 @@
                     }
                 });
             });
+
+            // Populate table with top 10 listings
+            const tableBody = document.querySelector('#top-listings-table tbody');
+            tableBody.innerHTML = '';
+            rankedListings.slice(0, 10).forEach(r => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${r.listing.id}</td>
+                    <td>${r.listing.property_type}</td>
+                    <td>${r.listing.room_type}</td>
+                    <td>${r.listing.accommodates}</td>
+                    <td>${r.listing.bathrooms}</td>
+                    <td>${r.listing.bedrooms}</td>
+                    <td>${r.listing.beds}</td>
+                    <td>$${r.listing.price.toFixed(2)}</td>
+                    <td>${r.listing.latitude}</td>
+                    <td>${r.listing.longitude}</td>
+                `;
+                tableBody.appendChild(row);
+            });
+
+            // Store top 100 for download
+            window.top100Listings = top100Listings;
+        }
+
+        // Generate CSV content for download
+        function generateCsvContent() {
+            const headers = ['id', 'property_type', 'room_type', 'accommodates', 'bathrooms', 'bedrooms', 'beds', 'price', 'latitude', 'longitude'];
+            uniquePoiTypes.forEach(type => {
+                headers.push(`min_distance_to_${type}`, `count_within_5mi_${type}`);
+            });
+            let csv = headers.join(',') + '\n';
+            window.top100Listings.forEach(r => {
+                const row = [
+                    r.listing.id,
+                    r.listing.property_type,
+                    r.listing.room_type,
+                    r.listing.accommodates,
+                    r.listing.bathrooms,
+                    r.listing.bedrooms,
+                    r.listing.beds,
+                    r.listing.price,
+                    r.listing.latitude,
+                    r.listing.longitude
+                ];
+                uniquePoiTypes.forEach(type => {
+                    row.push(r.metrics[type].minDistance.toFixed(2));
+                    row.push(r.metrics[type].countWithinRadius);
+                });
+                csv += row.join(',') + '\n';
+            });
+            return csv;
         }
 
         // Estimate computation time
@@ -379,6 +499,8 @@
                 const bathroomsDiff = Math.abs(userListing.bathrooms - listing.bathrooms);
                 const bedroomsDiff = Math.abs(userListing.bedrooms - listing.bedrooms);
                 const bedsDiff = Math.abs(userListing.beds - listing.beds);
+                const minNightsDiff = Math.abs(userListing.min_nights - listing.min_nights);
+                const maxNightsDiff = Math.abs(userListing.max_nights - listing.max_nights);
                 const amenitiesSimilarity = jaccardSimilarity(userListing.amenities, listing.amenities);
                 const distance = haversineDistance(userListing.lat, userListing.lon, listing.latitude, listing.longitude);
                 const distanceSimilarity = Math.exp(-distance / sigma);
@@ -390,6 +512,8 @@
                     1 / (1 + bathroomsDiff) +
                     1 / (1 + bedroomsDiff) + 
                     1 / (1 + bedsDiff) +
+                    1 / (1 + minNightsDiff) +
+                    1 / (1 + maxNightsDiff) +
                     1 * amenitiesSimilarity + 
                     2 * distanceSimilarity;
 
