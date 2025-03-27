@@ -30,7 +30,7 @@
             padding: 20px;
             border: 1px solid #ccc;
             border-radius: 5px;
-            overflow-x: auto; /* Allow horizontal scrolling if table is too wide */
+            overflow-x: auto; /* Horizontal scrolling only if needed */
         }
         form label {
             display: inline-block;
@@ -77,7 +77,6 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
-            min-width: 800px; /* Ensure table is wide enough for content */
         }
         table, th, td {
             border: 1px solid #ccc;
@@ -132,14 +131,8 @@
                 <tr>
                     <th>ID</th>
                     <th>Property Type</th>
-                    <th>Room Type</th>
-                    <th>Accommodates</th>
-                    <th>Bathrooms</th>
-                    <th>Bedrooms</th>
-                    <th>Beds</th>
                     <th>Price</th>
-                    <th>Latitude</th>
-                    <th>Longitude</th>
+                    <th>Distance (mi)</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -188,14 +181,14 @@
                     listing.min_nights = parseInt(listing.minimum_nights);
                     listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
-                }).filter(listing => !isNaN(listing.price)); // Filter out listings with invalid prices
+                });
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
                 populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load listing data.');
+                alert('Failed to load Airbnb listings data.');
             }
         });
 
@@ -251,7 +244,7 @@
             if (marker) {
                 marker.setLatLng(e.latlng);
             } else {
-                marker = L.circleMarker(e.latlng, { radius: 8, color: 'blue', fillColor: 'blue', fillOpacity: 1 }).addTo(map);
+                marker = L.marker(e.latlng).addTo(map);
             }
             userLocation = e.latlng;
         });
@@ -276,18 +269,6 @@
         document.getElementById('back').addEventListener('click', function() {
             document.getElementById('results').style.display = 'none';
             document.getElementById('input-section').style.display = 'block';
-        });
-
-        // Handle download button click
-        document.getElementById('download').addEventListener('click', function() {
-            const csvContent = generateCsvContent();
-            const blob = new Blob([csvContent], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'top_listings_with_poi_metrics.csv';
-            a.click();
-            URL.revokeObjectURL(url);
         });
 
         // Compute price recommendation
@@ -331,16 +312,22 @@
 
             const topNVector = 500; // Top 500 in vector similarity phase
             const topNPoi = 100; // Top 100 in POI similarity phase
-            const radius = 8046.72; // 5 miles in meters
+            const radius = 8046.72; // 5 miles in meters for POI computation
 
-            const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
-            if (similarListings.length === 0) {
+            // Filter listings within 3 miles (4828 meters)
+            const nearbyListings = airbnbListings.filter(listing => {
+                const distance = haversineDistance(lat, lon, listing.latitude, listing.longitude);
+                return distance <= 4828; // 3 miles
+            });
+
+            if (nearbyListings.length === 0) {
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('results').style.display = 'block';
-                document.getElementById('recommendation').textContent = 'No similar listings found.';
+                document.getElementById('recommendation').textContent = 'No similar listings found within 3 miles.';
                 return;
             }
 
+            const similarListings = findSimilarListings(userListing, nearbyListings, topNVector);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
 
@@ -348,13 +335,6 @@
             const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
             rankedListings.sort((a, b) => b.score - a.score);
             const top100Listings = rankedListings.slice(0, topNPoi);
-
-            if (top100Listings.length === 0) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('results').style.display = 'block';
-                document.getElementById('recommendation').textContent = 'No listings with valid POI metrics found.';
-                return;
-            }
 
             // Compute weighted average price using top 100
             const recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
@@ -393,14 +373,19 @@
                 }
             });
 
-            // Add user location as a blue circle
-            L.circleMarker([lat, lon], { radius: 8, color: 'blue', fillColor: 'blue', fillOpacity: 1, title: 'Your Location' }).addTo(resultMap);
+            // Add user location as a traditional pin
+            L.marker([lat, lon], { title: 'Your Location' }).addTo(resultMap);
 
-            // Add top 5 listings as default pins
+            // Add top 5 listings as blue dots
             top5Listings.forEach(listing => {
                 const listingLat = listing.latitude;
                 const listingLon = listing.longitude;
-                const listingMarker = L.marker([listingLat, listingLon], { title: 'Similar Listing' }).addTo(resultMap);
+                L.circleMarker([listingLat, listingLon], {
+                    radius: 5,
+                    color: 'blue',
+                    fillColor: 'blue',
+                    fillOpacity: 1
+                }).addTo(resultMap);
 
                 // Add solid line to user location
                 L.polyline([[lat, lon], [listingLat, listingLon]], {
@@ -444,53 +429,16 @@
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
             rankedListings.slice(0, 10).forEach(r => {
+                const distance = haversineDistance(lat, lon, r.listing.latitude, r.listing.longitude) / 1609.34; // Convert to miles
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${r.listing.id}</td>
                     <td>${r.listing.property_type}</td>
-                    <td>${r.listing.room_type}</td>
-                    <td>${r.listing.accommodates}</td>
-                    <td>${r.listing.bathrooms}</td>
-                    <td>${r.listing.bedrooms}</td>
-                    <td>${r.listing.beds}</td>
                     <td>$${r.listing.price.toFixed(2)}</td>
-                    <td>${r.listing.latitude}</td>
-                    <td>${r.listing.longitude}</td>
+                    <td>${distance.toFixed(2)} mi</td>
                 `;
                 tableBody.appendChild(row);
             });
-
-            // Store top 100 for download
-            window.top100Listings = top100Listings;
-        }
-
-        // Generate CSV content for download
-        function generateCsvContent() {
-            const headers = ['id', 'property_type', 'room_type', 'accommodates', 'bathrooms', 'bedrooms', 'beds', 'price', 'latitude', 'longitude'];
-            uniquePoiTypes.forEach(type => {
-                headers.push(`min_distance_to_${type}`, `count_within_5mi_${type}`);
-            });
-            let csv = headers.join(',') + '\n';
-            window.top100Listings.forEach(r => {
-                const row = [
-                    r.listing.id,
-                    r.listing.property_type,
-                    r.listing.room_type,
-                    r.listing.accommodates,
-                    r.listing.bathrooms,
-                    r.listing.bedrooms,
-                    r.listing.beds,
-                    r.listing.price,
-                    r.listing.latitude,
-                    r.listing.longitude
-                ];
-                uniquePoiTypes.forEach(type => {
-                    row.push(r.metrics[type].minDistance.toFixed(2));
-                    row.push(r.metrics[type].countWithinRadius);
-                });
-                csv += row.join(',') + '\n';
-            });
-            return csv;
         }
 
         // Estimate computation time
@@ -609,10 +557,8 @@
                 uniquePoiTypes.forEach(type => {
                     const { minDistance, countWithinRadius } = m.metrics[type];
                     const { minDist, maxDist, minCount, maxCount } = typeMetrics[type];
-                    // Normalize distance (smaller is better)
                     let normDistance = maxDist > minDist ? 
                         (maxDist - minDistance) / (maxDist - minDist) : 1;
-                    // Normalize count (larger is better)
                     let normCount = maxCount > minCount ? 
                         (countWithinRadius - minCount) / (maxCount - minCount) : 1;
                     score += poiRatings[type] * (normDistance + normCount);
