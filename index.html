@@ -30,7 +30,7 @@
             padding: 20px;
             border: 1px solid #ccc;
             border-radius: 5px;
-            overflow-x: auto; /* Horizontal scrolling only if needed */
+            overflow-x: auto;
         }
         form label {
             display: inline-block;
@@ -85,6 +85,34 @@
             padding: 8px;
             text-align: left;
         }
+        .slider-container {
+            position: relative;
+            width: 200px;
+            margin-left: 150px;
+        }
+        .slider-container input[type="range"] {
+            width: 100%;
+            position: absolute;
+            left: 0;
+            top: 0;
+            margin: 0;
+            pointer-events: none;
+        }
+        .slider-container input[type="range"]:nth-child(1) {
+            z-index: 2;
+            pointer-events: auto;
+        }
+        .slider-container input[type="range"]:nth-child(2) {
+            z-index: 1;
+            pointer-events: auto;
+        }
+        .slider-values {
+            display: flex;
+            justify-content: space-between;
+            width: 200px;
+            margin-left: 150px;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -106,10 +134,15 @@
             <input type="number" id="beds" name="beds" min="0" required><br>
             <label for="amenities">Amenities (comma-separated):</label>
             <textarea id="amenities" name="amenities" required></textarea><br>
-            <label for="min_nights">Min Nights:</label>
-            <input type="number" id="min_nights" name="min_nights" min="1" max="365" required><br>
-            <label for="max_nights">Max Nights:</label>
-            <input type="number" id="max_nights" name="max_nights" min="1" max="365" required><br>
+            <label for="nights_range">Nights Range (1-365):</label>
+            <div class="slider-container">
+                <input type="range" id="min_nights" min="1" max="365" value="1">
+                <input type="range" id="max_nights" min="1" max="365" value="365">
+            </div>
+            <div class="slider-values">
+                <span id="min_nights_value">1</span>
+                <span id="max_nights_value">365</span>
+            </div>
         </form>
         <h2>Select Your Location</h2>
         <div id="map"></div>
@@ -181,14 +214,14 @@
                     listing.min_nights = parseInt(listing.minimum_nights);
                     listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
-                });
-                uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
-                uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
+                }).filter(l => !isNaN(l.price));
+                uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))].sort();
+                uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))].sort();
                 populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load Airbnb listings data.');
+                alert('Failed to load listings data.');
             }
         });
 
@@ -234,6 +267,26 @@
             });
         }
 
+        // Setup double-slider for nights range
+        const minNightsSlider = document.getElementById('min_nights');
+        const maxNightsSlider = document.getElementById('max_nights');
+        const minNightsValue = document.getElementById('min_nights_value');
+        const maxNightsValue = document.getElementById('max_nights_value');
+
+        minNightsSlider.addEventListener('input', function() {
+            if (parseInt(this.value) > parseInt(maxNightsSlider.value)) {
+                this.value = maxNightsSlider.value;
+            }
+            minNightsValue.textContent = this.value;
+        });
+
+        maxNightsSlider.addEventListener('input', function() {
+            if (parseInt(this.value) < parseInt(minNightsSlider.value)) {
+                this.value = minNightsSlider.value;
+            }
+            maxNightsValue.textContent = this.value;
+        });
+
         // Initialize interactive map
         const map = L.map('map').setView([40.7128, -74.0060], 12); // Center on NYC
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -271,6 +324,18 @@
             document.getElementById('input-section').style.display = 'block';
         });
 
+        // Handle download button click
+        document.getElementById('download').addEventListener('click', function() {
+            const csvContent = generateCsvContent();
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'top_listings_with_poi_metrics.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
         // Compute price recommendation
         function computeRecommendation() {
             const startTime = performance.now();
@@ -285,8 +350,8 @@
             const bedrooms = parseInt(document.getElementById('bedrooms').value);
             const beds = parseInt(document.getElementById('beds').value);
             const amenities = document.getElementById('amenities').value.split(',').map(a => normalizeAmenity(a.trim()));
-            const minNights = parseInt(document.getElementById('min_nights').value);
-            const maxNights = parseInt(document.getElementById('max_nights').value);
+            const minNights = parseInt(minNightsSlider.value);
+            const maxNights = parseInt(maxNightsSlider.value);
             const lat = userLocation.lat;
             const lon = userLocation.lng;
 
@@ -310,8 +375,6 @@
                 lon: lon
             };
 
-            const topNVector = 500; // Top 500 in vector similarity phase
-            const topNPoi = 100; // Top 100 in POI similarity phase
             const radius = 8046.72; // 5 miles in meters for POI computation
 
             // Filter listings within 3 miles (4828 meters)
@@ -327,18 +390,18 @@
                 return;
             }
 
-            const similarListings = findSimilarListings(userListing, nearbyListings, topNVector);
+            const similarListings = findSimilarListings(userListing, nearbyListings);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
 
-            // Select top 100 based on POI scores
+            // Select top 200 based on POI scores for final price calculation
             const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
             rankedListings.sort((a, b) => b.score - a.score);
-            const top100Listings = rankedListings.slice(0, topNPoi);
+            const top200Listings = rankedListings.slice(0, 200);
 
-            // Compute weighted average price using top 100
-            const recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
-            const prices = top100Listings.map(r => r.listing.price);
+            // Compute weighted average price with distance emphasis
+            const recommendedPrice = computeWeightedAveragePrice(top200Listings.map(r => r.listing), top200Listings.map(r => r.score), lat, lon);
+            const prices = top200Listings.map(r => r.listing.price);
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
 
@@ -408,13 +471,11 @@
                                 closestPoi = poi;
                             }
                         });
-                        // Add solid line to closest POI
                         L.polyline([[listingLat, listingLon], closestPoi], {
                             color: 'blue',
                             weight: 2,
                             opacity: 0.5
                         }).addTo(resultMap);
-                        // Add dot for POI
                         L.circleMarker(closestPoi, {
                             radius: 3,
                             color: 'black',
@@ -439,12 +500,44 @@
                 `;
                 tableBody.appendChild(row);
             });
+
+            // Store top 200 for download
+            window.top200Listings = top200Listings;
+        }
+
+        // Generate CSV content for download
+        function generateCsvContent() {
+            const headers = ['id', 'property_type', 'room_type', 'accommodates', 'bathrooms', 'bedrooms', 'beds', 'price', 'latitude', 'longitude'];
+            uniquePoiTypes.forEach(type => {
+                headers.push(`min_distance_to_${type}`, `count_within_5mi_${type}`);
+            });
+            let csv = headers.join(',') + '\n';
+            window.top200Listings.forEach(r => {
+                const row = [
+                    r.listing.id,
+                    r.listing.property_type,
+                    r.listing.room_type,
+                    r.listing.accommodates,
+                    r.listing.bathrooms,
+                    r.listing.bedrooms,
+                    r.listing.beds,
+                    r.listing.price,
+                    r.listing.latitude,
+                    r.listing.longitude
+                ];
+                uniquePoiTypes.forEach(type => {
+                    row.push(r.metrics[type].minDistance.toFixed(2));
+                    row.push(r.metrics[type].countWithinRadius);
+                });
+                csv += row.join(',') + '\n';
+            });
+            return csv;
         }
 
         // Estimate computation time
         function estimateComputationTime(numListings, numNodes) {
-            const timePerListing = 0.0005; // seconds per listing
-            const timePerNode = 0.00001; // seconds per node
+            const timePerListing = 0.0005;
+            const timePerNode = 0.00001;
             return (numListings * timePerListing + numListings * numNodes * timePerNode).toFixed(2);
         }
 
@@ -454,11 +547,11 @@
         }
 
         // Find similar listings
-        function findSimilarListings(userListing, airbnbListings, topN) {
+        function findSimilarListings(userListing, airbnbListings) {
             const sigma = 1000; // Distance decay parameter in meters
             const similarities = airbnbListings.map(listing => {
-                const propertyTypeMatch = userListing.property_type === listing.property_type ? 1 : 0;
-                const roomTypeMatch = userListing.room_type === listing.room_type ? 1 : 0;
+                const propertyTypeSimilarity = stringSimilarity(userListing.property_type, listing.property_type);
+                const roomTypeSimilarity = stringSimilarity(userListing.room_type, listing.room_type);
                 const accommodatesDiff = Math.abs(userListing.accommodates - listing.accommodates);
                 const bathroomsDiff = Math.abs(userListing.bathrooms - listing.bathrooms);
                 const bedroomsDiff = Math.abs(userListing.bedrooms - listing.bedrooms);
@@ -470,8 +563,8 @@
                 const distanceSimilarity = Math.exp(-distance / sigma);
 
                 const similarity = 
-                    2 * propertyTypeMatch + 
-                    2 * roomTypeMatch +
+                    2 * propertyTypeSimilarity + 
+                    2 * roomTypeSimilarity +
                     1 / (1 + accommodatesDiff) + 
                     1 / (1 + bathroomsDiff) +
                     1 / (1 + bedroomsDiff) + 
@@ -485,7 +578,21 @@
             });
 
             similarities.sort((a, b) => b.similarity - a.similarity);
-            return similarities.slice(0, topN).map(s => s.listing);
+            return similarities.map(s => s.listing);
+        }
+
+        // Simple string similarity (Levenshtein distance approximation)
+        function stringSimilarity(str1, str2) {
+            str1 = str1.toLowerCase();
+            str2 = str2.toLowerCase();
+            if (str1 === str2) return 1;
+            const len1 = str1.length, len2 = str2.length;
+            const maxLen = Math.max(len1, len2);
+            let common = 0;
+            for (let i = 0; i < Math.min(len1, len2); i++) {
+                if (str1[i] === str2[i]) common++;
+            }
+            return common / maxLen;
         }
 
         // Jaccard similarity for amenities
@@ -567,13 +674,16 @@
             });
         }
 
-        // Compute weighted average price
-        function computeWeightedAveragePrice(listings, scores) {
+        // Compute weighted average price with distance emphasis
+        function computeWeightedAveragePrice(listings, scores, userLat, userLon) {
             let total = 0;
             let weightSum = 0;
             listings.forEach((listing, i) => {
-                total += scores[i] * listing.price;
-                weightSum += scores[i];
+                const distance = haversineDistance(userLat, userLon, listing.latitude, listing.longitude);
+                const distanceWeight = Math.exp(-distance / 500); // Sharp decay at 500 meters
+                const weightedScore = scores[i] * distanceWeight;
+                total += weightedScore * listing.price;
+                weightSum += weightedScore;
             });
             return weightSum > 0 ? total / weightSum : 0;
         }
