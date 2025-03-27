@@ -86,31 +86,60 @@
             text-align: left;
         }
         .slider-container {
+            display: flex;
+            align-items: center;
+            width: 300px;
+            margin-left: 150px;
+        }
+        .range-slider {
             position: relative;
             width: 200px;
-            margin-left: 150px;
+            height: 20px;
         }
-        .slider-container input[type="range"] {
+        .range-slider input[type="range"] {
             width: 100%;
             position: absolute;
-            left: 0;
             top: 0;
+            left: 0;
             margin: 0;
-            pointer-events: none;
+            -webkit-appearance: none;
+            background: transparent;
         }
-        .slider-container input[type="range"]:nth-child(1) {
-            z-index: 2;
-            pointer-events: auto;
+        .range-slider input[type="range"]:focus {
+            outline: none;
         }
-        .slider-container input[type="range"]:nth-child(2) {
-            z-index: 1;
-            pointer-events: auto;
+        .range-slider input[type="range"]::-webkit-slider-runnable-track {
+            height: 5px;
+            background: #ddd;
+            border-radius: 3px;
         }
-        .slider-values {
-            display: flex;
-            justify-content: space-between;
-            width: 200px;
-            margin-left: 150px;
+        .range-slider input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 15px;
+            height: 15px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+            margin-top: -5px;
+        }
+        .range-track {
+            position: absolute;
+            height: 5px;
+            background: #ddd;
+            top: 7px;
+            width: 100%;
+            border-radius: 3px;
+        }
+        .range-fill {
+            position: absolute;
+            height: 5px;
+            background: #4CAF50;
+            top: 7px;
+            border-radius: 3px;
+        }
+        .slider-values span {
+            width: 40px;
+            text-align: center;
             font-size: 14px;
         }
     </style>
@@ -136,12 +165,14 @@
             <textarea id="amenities" name="amenities" required></textarea><br>
             <label for="nights_range">Nights Range (1-365):</label>
             <div class="slider-container">
-                <input type="range" id="min_nights" min="1" max="365" value="1">
-                <input type="range" id="max_nights" min="1" max="365" value="365">
-            </div>
-            <div class="slider-values">
-                <span id="min_nights_value">1</span>
-                <span id="max_nights_value">365</span>
+                <span id="min_nights_value" class="slider-values">1</span>
+                <div class="range-slider">
+                    <div class="range-track"></div>
+                    <div class="range-fill" id="range_fill"></div>
+                    <input type="range" id="min_nights" min="1" max="365" value="1">
+                    <input type="range" id="max_nights" min="1" max="365" value="365">
+                </div>
+                <span id="max_nights_value" class="slider-values">365</span>
             </div>
         </form>
         <h2>Select Your Location</h2>
@@ -272,20 +303,35 @@
         const maxNightsSlider = document.getElementById('max_nights');
         const minNightsValue = document.getElementById('min_nights_value');
         const maxNightsValue = document.getElementById('max_nights_value');
+        const rangeFill = document.getElementById('range_fill');
+
+        function updateRangeFill() {
+            const min = parseInt(minNightsSlider.value);
+            const max = parseInt(maxNightsSlider.value);
+            const minPercent = ((min - 1) / 364) * 100;
+            const maxPercent = ((max - 1) / 364) * 100;
+            rangeFill.style.left = `${minPercent}%`;
+            rangeFill.style.width = `${maxPercent - minPercent}%`;
+            minNightsValue.textContent = min;
+            maxNightsValue.textContent = max;
+        }
 
         minNightsSlider.addEventListener('input', function() {
             if (parseInt(this.value) > parseInt(maxNightsSlider.value)) {
                 this.value = maxNightsSlider.value;
             }
-            minNightsValue.textContent = this.value;
+            updateRangeFill();
         });
 
         maxNightsSlider.addEventListener('input', function() {
             if (parseInt(this.value) < parseInt(minNightsSlider.value)) {
                 this.value = minNightsSlider.value;
             }
-            maxNightsValue.textContent = this.value;
+            updateRangeFill();
         });
+
+        // Initialize range fill
+        updateRangeFill();
 
         // Initialize interactive map
         const map = L.map('map').setView([40.7128, -74.0060], 12); // Center on NYC
