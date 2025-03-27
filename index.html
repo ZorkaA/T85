@@ -89,9 +89,7 @@
             text-align: left;
         }
         .slider-container {
-            display: flex;
-            align-items: center;
-            width: 300px;
+            width: 200px;
             margin-left: 150px;
         }
         .range-slider {
@@ -143,10 +141,17 @@
             border-radius: 3px;
             z-index: 1;
         }
+        .slider-values {
+            display: flex;
+            justify-content: space-between;
+            width: 200px;
+            margin-left: 150px;
+            margin-top: 5px;
+            font-size: 14px;
+        }
         .slider-values span {
             min-width: 40px;
             text-align: center;
-            font-size: 14px;
         }
         .heatmap-scale {
             display: flex;
@@ -156,6 +161,20 @@
         }
         .heatmap-scale div {
             flex: 1;
+        }
+        #progress-bar {
+            width: 200px;
+            height: 10px;
+            background: #ddd;
+            border-radius: 5px;
+            margin: 10px auto;
+        }
+        #progress-fill {
+            height: 100%;
+            background: #4CAF50;
+            border-radius: 5px;
+            width: 0%;
+            transition: width 0.5s ease;
         }
     </style>
 </head>
@@ -180,14 +199,16 @@
             <textarea id="amenities" name="amenities" required></textarea><br>
             <label for="nights_range">Nights Range (1-365):</label>
             <div class="slider-container">
-                <span id="min_nights_value" class="slider-values">1</span>
                 <div class="range-slider">
                     <div class="range-track"></div>
                     <div class="range-fill" id="range_fill"></div>
                     <input type="range" id="min_nights" min="1" max="365" value="1">
                     <input type="range" id="max_nights" min="1" max="365" value="365">
                 </div>
-                <span id="max_nights_value" class="slider-values">365</span>
+            </div>
+            <div class="slider-values">
+                <span id="min_nights_value">1</span>
+                <span id="max_nights_value">365</span>
             </div>
         </form>
         <h2>Select Your Location</h2>
@@ -198,6 +219,9 @@
     </div>
     <div id="loading">
         <p>Computing recommendations... <span id="time-remaining"></span></p>
+        <div id="progress-bar">
+            <div id="progress-fill"></div>
+        </div>
     </div>
     <div id="results">
         <h2>Recommended Price Range</h2>
@@ -303,6 +327,7 @@
         // Generate sliders for POI importance
         function generatePoiSliders() {
             const slidersDiv = document.getElementById('poi-sliders');
+            slidersDiv.innerHTML = ''; // Clear any existing content
             uniquePoiTypes.forEach(type => {
                 const label = document.createElement('label');
                 label.textContent = type;
@@ -407,13 +432,22 @@
         document.getElementById('show-heatmap').addEventListener('click', function() {
             const heatmapDiv = document.getElementById('heatmap-map');
             heatmapDiv.style.display = heatmapDiv.style.display === 'none' ? 'block' : 'none';
+            if (heatmapDiv.style.display === 'block' && heatmapMap) {
+                heatmapMap.invalidateSize();
+            }
         });
 
         // Compute price recommendation
         function computeRecommendation() {
             const startTime = performance.now();
-            const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
-            updateTimeRemaining(timeEstimate);
+            const timeEstimate = parseFloat(estimateComputationTime(airbnbListings.length, osmNodes.length));
+            let elapsedTime = 0;
+            updateProgress(startTime, timeEstimate, elapsedTime);
+
+            const progressInterval = setInterval(() => {
+                elapsedTime = (performance.now() - startTime) / 1000;
+                updateProgress(startTime, timeEstimate, elapsedTime);
+            }, 1000);
 
             // Collect user input
             const propertyType = document.getElementById('property_type').value;
@@ -457,6 +491,7 @@
             });
 
             if (nearbyListings.length === 0) {
+                clearInterval(progressInterval);
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('results').style.display = 'block';
                 document.getElementById('recommendation').textContent = 'No similar listings found within 3 miles.';
@@ -489,6 +524,7 @@
                 .map(t => t.type);
 
             // Display results
+            clearInterval(progressInterval);
             document.getElementById('loading').style.display = 'none';
             document.getElementById('results').style.display = 'block';
             document.getElementById('recommendation').textContent = 
@@ -574,41 +610,51 @@
                 tableBody.appendChild(row);
             });
 
-            // Initialize heatmap map
-            if (!heatmapMap) {
+            // Initialize or update heatmap map
+            if (heatmapMap) {
+                heatmapMap.eachLayer(layer => heatmapMap.removeLayer(layer));
+            } else {
                 heatmapMap = L.map('heatmap-map').setView([lat, lon], 12);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                }).addTo(heatmapMap);
-
-                const maxPrice = Math.max(...airbnbListings.map(l => l.price));
-                const heatData = airbnbListings.map(listing => [
-                    listing.latitude,
-                    listing.longitude,
-                    listing.price / maxPrice // Normalize to 0-1
-                ]);
-
-                L.heatLayer(heatData, {
-                    radius: 25,
-                    blur: 15,
-                    maxZoom: 17,
-                    gradient: { 0.4: 'blue', 0.65: 'yellow', 1: 'red' }
-                }).addTo(heatmapMap);
-
-                // Create heatmap scale
-                const scale = document.getElementById('heatmap-scale');
-                scale.innerHTML = '';
-                const colors = ['blue', 'yellow', 'red'];
-                colors.forEach(color => {
-                    const div = document.createElement('div');
-                    div.style.backgroundColor = color;
-                    scale.appendChild(div);
-                });
-                scale.insertAdjacentHTML('afterend', `<p>Price: $0 - $${maxPrice.toFixed(2)}</p>`);
             }
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+            }).addTo(heatmapMap);
+
+            const maxPrice = Math.max(...airbnbListings.map(l => l.price));
+            const heatData = airbnbListings.map(listing => [
+                listing.latitude,
+                listing.longitude,
+                listing.price / maxPrice // Normalize to 0-1
+            ]);
+
+            L.heatLayer(heatData, {
+                radius: 25,
+                blur: 15,
+                maxZoom: 17,
+                gradient: { 0.4: 'blue', 0.65: 'yellow', 1: 'red' }
+            }).addTo(heatmapMap);
+
+            // Create heatmap scale
+            const scale = document.getElementById('heatmap-scale');
+            scale.innerHTML = '';
+            const colors = ['blue', 'yellow', 'red'];
+            colors.forEach(color => {
+                const div = document.createElement('div');
+                div.style.backgroundColor = color;
+                scale.appendChild(div);
+            });
+            scale.insertAdjacentHTML('afterend', `<p>Price: $0 - $${maxPrice.toFixed(2)}</p>`);
 
             // Store top 200 for download
             window.top200Listings = top200Listings;
+        }
+
+        // Update progress bar and time remaining
+        function updateProgress(startTime, timeEstimate, elapsedTime) {
+            const remaining = Math.max(0, timeEstimate - elapsedTime);
+            document.getElementById('time-remaining').textContent = `Estimated time remaining: ${remaining.toFixed(1)} seconds`;
+            const progress = Math.min(100, (elapsedTime / timeEstimate) * 100);
+            document.getElementById('progress-fill').style.width = `${progress}%`;
         }
 
         // Generate CSV content for download
@@ -645,11 +691,6 @@
             const timePerListing = 0.0005;
             const timePerNode = 0.00001;
             return (numListings * timePerListing + numListings * numNodes * timePerNode).toFixed(2);
-        }
-
-        // Update time remaining display
-        function updateTimeRemaining(estimate) {
-            document.getElementById('time-remaining').textContent = `Estimated time remaining: ${estimate} seconds`;
         }
 
         // Find similar listings with heavy distance weighting
