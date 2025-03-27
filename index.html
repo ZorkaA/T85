@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Airbnb Price Recommendation</title>
+    <title>Listing Price Recommendation</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
     <style>
         body {
@@ -30,6 +30,7 @@
             padding: 20px;
             border: 1px solid #ccc;
             border-radius: 5px;
+            overflow-x: auto; /* Allow horizontal scrolling if table is too wide */
         }
         form label {
             display: inline-block;
@@ -76,6 +77,7 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
+            min-width: 800px; /* Ensure table is wide enough for content */
         }
         table, th, td {
             border: 1px solid #ccc;
@@ -87,7 +89,7 @@
     </style>
 </head>
 <body>
-    <h1>Airbnb Price Recommendation</h1>
+    <h1>Listing Price Recommendation</h1>
     <div id="input-section">
         <h2>Enter Your Listing Details</h2>
         <form id="listing-form">
@@ -186,14 +188,14 @@
                     listing.min_nights = parseInt(listing.minimum_nights);
                     listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
-                });
+                }).filter(listing => !isNaN(listing.price)); // Filter out listings with invalid prices
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
                 populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load Airbnb listings data.');
+                alert('Failed to load listing data.');
             }
         });
 
@@ -249,7 +251,7 @@
             if (marker) {
                 marker.setLatLng(e.latlng);
             } else {
-                marker = L.marker(e.latlng).addTo(map);
+                marker = L.circleMarker(e.latlng, { radius: 8, color: 'blue', fillColor: 'blue', fillOpacity: 1 }).addTo(map);
             }
             userLocation = e.latlng;
         });
@@ -332,6 +334,13 @@
             const radius = 8046.72; // 5 miles in meters
 
             const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
+            if (similarListings.length === 0) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('results').style.display = 'block';
+                document.getElementById('recommendation').textContent = 'No similar listings found.';
+                return;
+            }
+
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
 
@@ -339,6 +348,13 @@
             const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
             rankedListings.sort((a, b) => b.score - a.score);
             const top100Listings = rankedListings.slice(0, topNPoi);
+
+            if (top100Listings.length === 0) {
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('results').style.display = 'block';
+                document.getElementById('recommendation').textContent = 'No listings with valid POI metrics found.';
+                return;
+            }
 
             // Compute weighted average price using top 100
             const recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
@@ -372,15 +388,15 @@
 
             // Clear previous layers
             resultMap.eachLayer(layer => {
-                if (layer instanceof L.Marker || layer instanceof L.Polyline) {
+                if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.CircleMarker) {
                     resultMap.removeLayer(layer);
                 }
             });
 
-            // Add user location marker
-            L.marker([lat, lon], { title: 'Your Location' }).addTo(resultMap);
+            // Add user location as a blue circle
+            L.circleMarker([lat, lon], { radius: 8, color: 'blue', fillColor: 'blue', fillOpacity: 1, title: 'Your Location' }).addTo(resultMap);
 
-            // Add top 5 listings markers and lines
+            // Add top 5 listings as default pins
             top5Listings.forEach(listing => {
                 const listingLat = listing.latitude;
                 const listingLon = listing.longitude;
@@ -593,8 +609,10 @@
                 uniquePoiTypes.forEach(type => {
                     const { minDistance, countWithinRadius } = m.metrics[type];
                     const { minDist, maxDist, minCount, maxCount } = typeMetrics[type];
+                    // Normalize distance (smaller is better)
                     let normDistance = maxDist > minDist ? 
                         (maxDist - minDistance) / (maxDist - minDist) : 1;
+                    // Normalize count (larger is better)
                     let normCount = maxCount > minCount ? 
                         (countWithinRadius - minCount) / (maxCount - minCount) : 1;
                     score += poiRatings[type] * (normDistance + normCount);
