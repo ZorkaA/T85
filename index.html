@@ -301,13 +301,15 @@
             download: true,
             header: true,
             complete: function(results) {
-                osmNodes = results.data;
+                osmNodes = results.data.filter(node => node.lat && node.lon && node.nodetype);
                 uniquePoiTypes = [...new Set(osmNodes.map(node => node.nodetype))];
+                console.log('OSM Nodes Loaded:', osmNodes.length, 'Unique POI Types:', uniquePoiTypes.length);
+                if (osmNodes.length === 0) alert('No valid POI data loaded.');
                 generatePoiSliders();
             },
             error: function(error) {
                 console.error('Error loading osm_nodes.csv:', error);
-                alert('Failed to load POI data.');
+                alert('Failed to load POI data. Check console for details.');
             }
         });
 
@@ -316,21 +318,28 @@
             header: true,
             complete: function(results) {
                 airbnbListings = results.data.map(listing => {
-                    listing.amenities = JSON.parse(listing.amenities).map(a => normalizeAmenity(a));
-                    listing.price = parseFloat(listing.price.replace('$', '').replace(',', ''));
-                    listing.latitude = parseFloat(listing.latitude);
-                    listing.longitude = parseFloat(listing.longitude);
-                    listing.min_nights = parseInt(listing.minimum_nights);
-                    listing.max_nights = parseInt(listing.maximum_nights);
-                    return listing;
-                }).filter(listing => !isNaN(listing.price));
+                    try {
+                        listing.amenities = JSON.parse(listing.amenities || '[]').map(a => normalizeAmenity(a));
+                        listing.price = parseFloat(listing.price.replace('$', '').replace(',', ''));
+                        listing.latitude = parseFloat(listing.latitude);
+                        listing.longitude = parseFloat(listing.longitude);
+                        listing.min_nights = parseInt(listing.minimum_nights) || 1;
+                        listing.max_nights = parseInt(listing.maximum_nights) || 365;
+                        return listing;
+                    } catch (e) {
+                        console.warn('Invalid listing data:', listing, e);
+                        return null;
+                    }
+                }).filter(listing => listing && !isNaN(listing.price) && !isNaN(listing.latitude) && !isNaN(listing.longitude));
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))].sort();
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))].sort();
+                console.log('Airbnb Listings Loaded:', airbnbListings.length, 'Property Types:', uniquePropertyTypes.length, 'Room Types:', uniqueRoomTypes.length);
+                if (airbnbListings.length === 0) alert('No valid listings data loaded.');
                 populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load listings data.');
+                alert('Failed to load listings data. Check console for details.');
             }
         });
 
@@ -389,6 +398,7 @@
                 marker = L.marker(e.latlng).addTo(map);
             }
             userLocation = e.latlng;
+            console.log('User Location Set:', userLocation);
         });
 
         // Handle proceed button click
@@ -427,6 +437,7 @@
 
         // Compute price recommendation with loading bar
         function computeRecommendation() {
+            console.log('Starting computation...');
             const startTime = performance.now();
             const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
             updateTimeRemaining(timeEstimate);
@@ -474,6 +485,7 @@
                 lat: lat,
                 lon: lon
             };
+            console.log('User Listing:', userListing);
 
             const topNVector = 500;
             const topNPoi = 100;
@@ -482,10 +494,15 @@
             updateLoadingBar();
 
             const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
+            console.log('Similar Listings Found:', similarListings.length);
+            if (similarListings.length === 0) console.warn('No similar listings found within 3 miles.');
+
             updateLoadingBar();
 
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
+            console.log('POI Metrics Computed:', poiMetrics.length, 'Scores:', scores.length);
+
             updateLoadingBar();
 
             const rankedListings = similarListings.map((listing, i) => ({
@@ -504,10 +521,9 @@
                 }
                 topListings.push(rankedListings[i]);
             }
-            if (discarded > 0) {
-                console.log(`Rows discarded due to NaN prices: ${discarded}`);
-            }
+            if (discarded > 0) console.log(`Rows discarded due to NaN prices: ${discarded}`);
             const top100Listings = topListings.slice(0, topNPoi);
+            console.log('Top 100 Listings:', top100Listings.length);
 
             const prices = top100Listings.map(r => r.listing.price);
             let recommendedPrice, minPrice, maxPrice;
@@ -515,22 +531,26 @@
                 recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
                 minPrice = Math.min(...prices);
                 maxPrice = Math.max(...prices);
+                console.log('Price Calculated:', { recommendedPrice, minPrice, maxPrice });
             } else {
                 recommendedPrice = minPrice = maxPrice = null;
+                console.warn('No valid prices available for calculation.');
             }
 
             top10Similar = topListings.slice(0, 10).map(r => r.listing);
             top10Closest = top100Listings
-                .filter(r => r.distance <= 1609.34) // 1 mile in meters
+                .filter(r => r.distance <= 1609.34)
                 .sort((a, b) => a.distance - b.distance)
                 .slice(0, 10)
                 .map(r => r.listing);
+            console.log('Top 10 Similar:', top10Similar.length, 'Top 10 Closest:', top10Closest.length);
 
             const top5PoiTypes = uniquePoiTypes
                 .map(type => ({ type, rating: poiRatings[type] }))
                 .sort((a, b) => Math.abs(b.rating) - Math.abs(a.rating))
                 .slice(0, 5)
                 .map(t => t.type);
+            console.log('Top 5 POI Types:', top5PoiTypes);
 
             updateLoadingBar();
 
@@ -551,7 +571,10 @@
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 }).addTo(resultMap);
+            } else {
+                resultMap.setView([lat, lon], 13);
             }
+            resultMap.invalidateSize(); // Ensure map renders correctly
 
             document.getElementById('most-similar').addEventListener('click', () => switchMapView('similar'));
             document.getElementById('closest').addEventListener('click', () => switchMapView('closest'));
@@ -565,9 +588,10 @@
             const factors = { night: 1, week: 7, month: 30, year: 365 };
             const factor = factors[period];
             const priceText = document.getElementById('price-text');
-            priceText.textContent = prices.length > 0 ?
+            priceText.textContent = recommendedPrice !== null ?
                 `Recommended Price: $${(recommendedPrice * factor).toFixed(2)} (Range: $${(minPrice * factor).toFixed(2)} - $${(maxPrice * factor).toFixed(2)})` :
                 'No valid similar listings found within 3 miles.';
+            console.log('Price Display Updated:', { period, recommendedPrice, minPrice, maxPrice });
         }
 
         // Switch map view between similar and closest
@@ -636,6 +660,7 @@
                     }
                 });
             });
+            resultMap.invalidateSize(); // Ensure map renders
 
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
@@ -655,6 +680,7 @@
                 `;
                 tableBody.appendChild(row);
             });
+            console.log(`Switched to ${view} view:`, topListings.length, 'listings displayed');
         }
 
         // Generate CSV content for download
@@ -815,7 +841,7 @@
                     const rating = poiRatings[type];
                     score += rating >= 0 ? 
                         rating * (normDistance + normCount) : 
-                        rating * (2 - normDistance - normCount); // Invert for negative ratings
+                        rating * (2 - normDistance - normCount);
                 });
                 return score;
             });
@@ -837,7 +863,7 @@
             if (event.key === 'd' && event.ctrlKey) {
                 if (prompt('Type "demo" to randomize sliders:') === 'demo') {
                     document.querySelectorAll('#poi-sliders input[type="range"]').forEach(slider => {
-                        slider.value = Math.floor(Math.random() * 21) - 10; // Random -10 to 10
+                        slider.value = Math.floor(Math.random() * 21) - 10;
                     });
                     console.log('Sliders randomized for demo.');
                 }
