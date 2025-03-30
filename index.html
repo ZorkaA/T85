@@ -77,7 +77,7 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
-            min-width: 800px;
+            min-width: 600px;
         }
         table, th, td {
             border: 1px solid #ccc;
@@ -85,6 +85,19 @@
         th, td {
             padding: 8px;
             text-align: left;
+        }
+        #loading-bar {
+            width: 100%;
+            height: 20px;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            margin-top: 10px;
+        }
+        #loading-progress {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.1s;
         }
     </style>
 </head>
@@ -102,15 +115,15 @@
             <label for="bathrooms">Bathrooms:</label>
             <input type="number" id="bathrooms" name="bathrooms" min="0" step="0.5" required><br>
             <label for="bedrooms">Bedrooms:</label>
-            <input type="number" id="bedrooms" name apply="bedrooms" min="0" required><br>
+            <input type="number" id="bedrooms" name="bedrooms" min="0" required><br>
             <label for="beds">Beds:</label>
             <input type="number" id="beds" name="beds" min="0" required><br>
             <label for="amenities">Amenities (comma-separated):</label>
             <textarea id="amenities" name="amenities" required></textarea><br>
             <label for="min_nights">Min Nights:</label>
-            <input type="number" id="min_nights" name="min_nights" min="1" max="365" required><br>
+            <input type="number" id="min_nights" name="min_nights" min="1" max="365"><br>
             <label for="max_nights">Max Nights:</label>
-            <input type="number" id="max_nights" name="max_nights" min="1" max="365" required><br>
+            <input type="number" id="max_nights" name="max_nights" min="1" max="365"><br>
         </form>
         <h2>Select Your Location</h2>
         <div id="map"></div>
@@ -120,11 +133,14 @@
     </div>
     <div id="loading">
         <p>Computing recommendations... <span id="time-remaining"></span></p>
+        <div id="loading-bar">
+            <div id="loading-progress"></div>
+        </div>
     </div>
     <div id="results">
         <h2>Recommended Price Range</h2>
         <p id="recommendation"></p>
-        <h3>Top 5 Similar Listings and Nearest POIs</h3>
+        <h3>Top 10 Similar Listings and Nearest POIs</h3>
         <div id="result-map"></div>
         <h3>Top 10 Similar Listings</h3>
         <table id="top-listings-table">
@@ -138,8 +154,6 @@
                     <th>Bedrooms</th>
                     <th>Beds</th>
                     <th>Price</th>
-                    <th>Latitude</th>
-                    <th>Longitude</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -269,7 +283,7 @@
             }
             document.getElementById('input-section').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
-            setTimeout(computeRecommendation, 100); // Allow UI to update
+            computeRecommendation();
         });
 
         // Handle back button click
@@ -290,11 +304,20 @@
             URL.revokeObjectURL(url);
         });
 
-        // Compute price recommendation
+        // Compute price recommendation with loading bar
         function computeRecommendation() {
             const startTime = performance.now();
             const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
             updateTimeRemaining(timeEstimate);
+
+            const totalSteps = 4; // Number of main computation steps
+            let currentStep = 0;
+
+            function updateLoadingBar() {
+                currentStep++;
+                const progress = (currentStep / totalSteps) * 100;
+                document.getElementById('loading-progress').style.width = `${progress}%`;
+            }
 
             // Collect user input
             const propertyType = document.getElementById('property_type').value;
@@ -304,8 +327,10 @@
             const bedrooms = parseInt(document.getElementById('bedrooms').value);
             const beds = parseInt(document.getElementById('beds').value);
             const amenities = document.getElementById('amenities').value.split(',').map(a => normalizeAmenity(a.trim()));
-            const minNights = parseInt(document.getElementById('min_nights').value);
-            const maxNights = parseInt(document.getElementById('max_nights').value);
+            const minNightsInput = document.getElementById('min_nights').value;
+            const maxNightsInput = document.getElementById('max_nights').value;
+            const minNights = minNightsInput ? parseInt(minNightsInput) : 1;
+            const maxNights = maxNightsInput ? parseInt(maxNightsInput) : 365;
             const lat = userLocation.lat;
             const lon = userLocation.lng;
 
@@ -333,16 +358,33 @@
             const topNPoi = 100; // Top 100 in POI similarity phase
             const radius = 8046.72; // 5 miles in meters
 
+            updateLoadingBar(); // Step 1: Collect input
+
             const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
+            updateLoadingBar(); // Step 2: Find similar listings
+
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
+            updateLoadingBar(); // Step 3: Compute POI metrics and scores
 
-            // Select top 100 based on POI scores
+            // Select top listings, handling NaN prices
             const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
             rankedListings.sort((a, b) => b.score - a.score);
-            const top100Listings = rankedListings.slice(0, topNPoi);
+            let topListings = [];
+            let discarded = 0;
+            for (let i = 0; topListings.length < topNPoi && i < rankedListings.length; i++) {
+                if (isNaN(rankedListings[i].listing.price)) {
+                    discarded++;
+                    continue;
+                }
+                topListings.push(rankedListings[i]);
+            }
+            if (discarded > 0) {
+                console.log(`Rows discarded due to NaN prices: ${discarded}`);
+            }
+            const top100Listings = topListings.slice(0, topNPoi);
 
-            // Compute weighted average price using top 100
+            // Compute weighted average price using top listings
             const prices = top100Listings.map(r => r.listing.price);
             let recommendedPrice, minPrice, maxPrice;
             if (prices.length > 0) {
@@ -353,8 +395,8 @@
                 recommendedPrice = minPrice = maxPrice = null;
             }
 
-            // Get top 5 for visualization
-            const top5Listings = rankedListings.slice(0, 5).map(r => r.listing);
+            // Get top 10 for visualization
+            const top10Listings = topListings.slice(0, 10).map(r => r.listing);
 
             // Get top 5 most important POI types
             const top5PoiTypes = uniquePoiTypes
@@ -363,12 +405,14 @@
                 .slice(0, 5)
                 .map(t => t.type);
 
+            updateLoadingBar(); // Step 4: Final calculations
+
             // Display results
             document.getElementById('loading').style.display = 'none';
             document.getElementById('results').style.display = 'block';
             document.getElementById('recommendation').textContent = prices.length > 0 ?
                 `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})` :
-                'No similar listings found within 3 miles.';
+                'No valid similar listings found within 3 miles.';
 
             // Initialize result map
             if (!resultMap) {
@@ -388,14 +432,14 @@
             // Add user location marker (traditional pin)
             L.marker([lat, lon], { title: 'Your Location' }).addTo(resultMap);
 
-            // Add top 5 listings markers (dots) and lines
-            top5Listings.forEach(listing => {
+            // Add top 10 listings markers (red dots) and lines
+            top10Listings.forEach(listing => {
                 const listingLat = listing.latitude;
                 const listingLon = listing.longitude;
                 const listingMarker = L.circleMarker([listingLat, listingLon], {
                     radius: 5,
-                    color: 'black',
-                    fillColor: 'black',
+                    color: 'red',
+                    fillColor: 'red',
                     fillOpacity: 1,
                     title: 'Similar Listing'
                 }).addTo(resultMap);
@@ -438,10 +482,10 @@
                 });
             });
 
-            // Populate table with top 10 listings
+            // Populate table with top 10 listings (no lat/lon)
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
-            rankedListings.slice(0, 10).forEach(r => {
+            topListings.slice(0, 10).forEach(r => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${r.listing.id}</td>
@@ -452,8 +496,6 @@
                     <td>${r.listing.bedrooms}</td>
                     <td>${r.listing.beds}</td>
                     <td>$${r.listing.price.toFixed(2)}</td>
-                    <td>${r.listing.latitude}</td>
-                    <td>${r.listing.longitude}</td>
                 `;
                 tableBody.appendChild(row);
             });
@@ -633,6 +675,18 @@
             });
             return weightSum > 0 ? total / weightSum : 0;
         }
+
+        // Demo feature: Randomize sliders on 'demo' in console
+        window.addEventListener('keydown', function(event) {
+            if (event.key === 'd' && event.ctrlKey) { // Ctrl+D as a proxy for console command
+                if (prompt('Type "demo" to randomize sliders:') === 'demo') {
+                    document.querySelectorAll('#poi-sliders input[type="range"]').forEach(slider => {
+                        slider.value = Math.floor(Math.random() * 11); // Random 0-10
+                    });
+                    console.log('Sliders randomized for demo.');
+                }
+            }
+        });
     </script>
 </body>
 </html>
