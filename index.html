@@ -26,11 +26,11 @@
         }
         #results {
             display: none;
-            max-width: 800px;
+            max-width: 1000px;
             padding: 20px;
             border: 1px solid #ccc;
             border-radius: 5px;
-            overflow-x: auto; /* Horizontal scrolling only if needed */
+            overflow-x: auto;
         }
         form label {
             display: inline-block;
@@ -68,7 +68,7 @@
             background-color: #45a049;
         }
         #result-map {
-            height: 400px;
+            height: 500px;
             width: 100%;
             margin-top: 20px;
             border: 1px solid #ccc;
@@ -77,6 +77,7 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
+            min-width: 800px;
         }
         table, th, td {
             border: 1px solid #ccc;
@@ -101,7 +102,7 @@
             <label for="bathrooms">Bathrooms:</label>
             <input type="number" id="bathrooms" name="bathrooms" min="0" step="0.5" required><br>
             <label for="bedrooms">Bedrooms:</label>
-            <input type="number" id="bedrooms" name="bedrooms" min="0" required><br>
+            <input type="number" id="bedrooms" name apply="bedrooms" min="0" required><br>
             <label for="beds">Beds:</label>
             <input type="number" id="beds" name="beds" min="0" required><br>
             <label for="amenities">Amenities (comma-separated):</label>
@@ -131,8 +132,14 @@
                 <tr>
                     <th>ID</th>
                     <th>Property Type</th>
+                    <th>Room Type</th>
+                    <th>Accommodates</th>
+                    <th>Bathrooms</th>
+                    <th>Bedrooms</th>
+                    <th>Beds</th>
                     <th>Price</th>
-                    <th>Distance (mi)</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -181,14 +188,14 @@
                     listing.min_nights = parseInt(listing.minimum_nights);
                     listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
-                });
+                }).filter(listing => !isNaN(listing.price)); // Filter out invalid prices
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
                 populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load Airbnb listings data.');
+                alert('Failed to load listings data.');
             }
         });
 
@@ -271,6 +278,18 @@
             document.getElementById('input-section').style.display = 'block';
         });
 
+        // Handle download button click
+        document.getElementById('download').addEventListener('click', function() {
+            const csvContent = generateCsvContent();
+            const blob = new Blob([csvContent], { type: 'text/csv' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'top_listings_with_poi_metrics.csv';
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
         // Compute price recommendation
         function computeRecommendation() {
             const startTime = performance.now();
@@ -312,22 +331,9 @@
 
             const topNVector = 500; // Top 500 in vector similarity phase
             const topNPoi = 100; // Top 100 in POI similarity phase
-            const radius = 8046.72; // 5 miles in meters for POI computation
+            const radius = 8046.72; // 5 miles in meters
 
-            // Filter listings within 3 miles (4828 meters)
-            const nearbyListings = airbnbListings.filter(listing => {
-                const distance = haversineDistance(lat, lon, listing.latitude, listing.longitude);
-                return distance <= 4828; // 3 miles
-            });
-
-            if (nearbyListings.length === 0) {
-                document.getElementById('loading').style.display = 'none';
-                document.getElementById('results').style.display = 'block';
-                document.getElementById('recommendation').textContent = 'No similar listings found within 3 miles.';
-                return;
-            }
-
-            const similarListings = findSimilarListings(userListing, nearbyListings, topNVector);
+            const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
 
@@ -337,10 +343,15 @@
             const top100Listings = rankedListings.slice(0, topNPoi);
 
             // Compute weighted average price using top 100
-            const recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
             const prices = top100Listings.map(r => r.listing.price);
-            const minPrice = Math.min(...prices);
-            const maxPrice = Math.max(...prices);
+            let recommendedPrice, minPrice, maxPrice;
+            if (prices.length > 0) {
+                recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
+                minPrice = Math.min(...prices);
+                maxPrice = Math.max(...prices);
+            } else {
+                recommendedPrice = minPrice = maxPrice = null;
+            }
 
             // Get top 5 for visualization
             const top5Listings = rankedListings.slice(0, 5).map(r => r.listing);
@@ -355,8 +366,9 @@
             // Display results
             document.getElementById('loading').style.display = 'none';
             document.getElementById('results').style.display = 'block';
-            document.getElementById('recommendation').textContent = 
-                `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})`;
+            document.getElementById('recommendation').textContent = prices.length > 0 ?
+                `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})` :
+                'No similar listings found within 3 miles.';
 
             // Initialize result map
             if (!resultMap) {
@@ -373,18 +385,19 @@
                 }
             });
 
-            // Add user location as a traditional pin
+            // Add user location marker (traditional pin)
             L.marker([lat, lon], { title: 'Your Location' }).addTo(resultMap);
 
-            // Add top 5 listings as blue dots
+            // Add top 5 listings markers (dots) and lines
             top5Listings.forEach(listing => {
                 const listingLat = listing.latitude;
                 const listingLon = listing.longitude;
-                L.circleMarker([listingLat, listingLon], {
+                const listingMarker = L.circleMarker([listingLat, listingLon], {
                     radius: 5,
-                    color: 'blue',
-                    fillColor: 'blue',
-                    fillOpacity: 1
+                    color: 'black',
+                    fillColor: 'black',
+                    fillOpacity: 1,
+                    title: 'Similar Listing'
                 }).addTo(resultMap);
 
                 // Add solid line to user location
@@ -429,16 +442,53 @@
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
             rankedListings.slice(0, 10).forEach(r => {
-                const distance = haversineDistance(lat, lon, r.listing.latitude, r.listing.longitude) / 1609.34; // Convert to miles
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${r.listing.id}</td>
                     <td>${r.listing.property_type}</td>
+                    <td>${r.listing.room_type}</td>
+                    <td>${r.listing.accommodates}</td>
+                    <td>${r.listing.bathrooms}</td>
+                    <td>${r.listing.bedrooms}</td>
+                    <td>${r.listing.beds}</td>
                     <td>$${r.listing.price.toFixed(2)}</td>
-                    <td>${distance.toFixed(2)} mi</td>
+                    <td>${r.listing.latitude}</td>
+                    <td>${r.listing.longitude}</td>
                 `;
                 tableBody.appendChild(row);
             });
+
+            // Store top 100 for download
+            window.top100Listings = top100Listings;
+        }
+
+        // Generate CSV content for download
+        function generateCsvContent() {
+            const headers = ['id', 'property_type', 'room_type', 'accommodates', 'bathrooms', 'bedrooms', 'beds', 'price', 'latitude', 'longitude'];
+            uniquePoiTypes.forEach(type => {
+                headers.push(`min_distance_to_${type}`, `count_within_5mi_${type}`);
+            });
+            let csv = headers.join(',') + '\n';
+            window.top100Listings.forEach(r => {
+                const row = [
+                    r.listing.id,
+                    r.listing.property_type,
+                    r.listing.room_type,
+                    r.listing.accommodates,
+                    r.listing.bathrooms,
+                    r.listing.bedrooms,
+                    r.listing.beds,
+                    r.listing.price,
+                    r.listing.latitude,
+                    r.listing.longitude
+                ];
+                uniquePoiTypes.forEach(type => {
+                    row.push(r.metrics[type].minDistance.toFixed(2));
+                    row.push(r.metrics[type].countWithinRadius);
+                });
+                csv += row.join(',') + '\n';
+            });
+            return csv;
         }
 
         // Estimate computation time
@@ -453,10 +503,16 @@
             document.getElementById('time-remaining').textContent = `Estimated time remaining: ${estimate} seconds`;
         }
 
-        // Find similar listings
+        // Find similar listings within 3 miles
         function findSimilarListings(userListing, airbnbListings, topN) {
+            const maxDistance = 4828.03; // 3 miles in meters
             const sigma = 1000; // Distance decay parameter in meters
-            const similarities = airbnbListings.map(listing => {
+            const nearbyListings = airbnbListings.filter(listing => {
+                const distance = haversineDistance(userListing.lat, userListing.lon, listing.latitude, listing.longitude);
+                return distance <= maxDistance;
+            });
+
+            const similarities = nearbyListings.map(listing => {
                 const propertyTypeMatch = userListing.property_type === listing.property_type ? 1 : 0;
                 const roomTypeMatch = userListing.room_type === listing.room_type ? 1 : 0;
                 const accommodatesDiff = Math.abs(userListing.accommodates - listing.accommodates);
@@ -485,7 +541,7 @@
             });
 
             similarities.sort((a, b) => b.similarity - a.similarity);
-            return similarities.slice(0, topN).map(s => s.listing);
+            return similarities.slice(0, Math.min(topN, similarities.length)).map(s => s.listing);
         }
 
         // Jaccard similarity for amenities
@@ -558,9 +614,9 @@
                     const { minDistance, countWithinRadius } = m.metrics[type];
                     const { minDist, maxDist, minCount, maxCount } = typeMetrics[type];
                     let normDistance = maxDist > minDist ? 
-                        (maxDist - minDistance) / (maxDist - minDist) : 1;
+                        (maxDist - minDistance) / (maxDist - minDist) : 1; // Less distance is better
                     let normCount = maxCount > minCount ? 
-                        (countWithinRadius - minCount) / (maxCount - minCount) : 1;
+                        (countWithinRadius - minCount) / (maxCount - minCount) : 1; // More quantity is better
                     score += poiRatings[type] * (normDistance + normCount);
                 });
                 return score;
