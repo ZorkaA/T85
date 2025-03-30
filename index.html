@@ -30,7 +30,7 @@
             padding: 20px;
             border: 1px solid #ccc;
             border-radius: 5px;
-            overflow-x: auto;
+            overflow-x: auto; /* Horizontal scrolling only if needed */
         }
         form label {
             display: inline-block;
@@ -67,14 +67,11 @@
         button:hover {
             background-color: #45a049;
         }
-        #result-map, #heatmap-map {
+        #result-map {
             height: 400px;
             width: 100%;
             margin-top: 20px;
             border: 1px solid #ccc;
-        }
-        #heatmap-map {
-            display: none;
         }
         table {
             width: 100%;
@@ -87,83 +84,6 @@
         th, td {
             padding: 8px;
             text-align: left;
-        }
-        .slider-container {
-            width: 200px;
-            margin-left: 150px;
-        }
-        .range-slider {
-            position: relative;
-            width: 200px;
-            height: 20px;
-        }
-        .range-slider input[type="range"] {
-            width: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            margin: 0;
-            -webkit-appearance: none;
-            background: transparent;
-            z-index: 2;
-        }
-        .range-slider input[type="range"]:focus {
-            outline: none;
-        }
-        .range-slider input[type="range"]::-webkit-slider-runnable-track {
-            height: 5px;
-            background: transparent;
-            border-radius: 3px;
-        }
-        .range-slider input[type="range"]::-webkit-slider-thumb {
-            -webkit-appearance: none;
-            width: 15px;
-            height: 15px;
-            background: #4CAF50;
-            border-radius: 50%;
-            cursor: pointer;
-            margin-top: -5px;
-        }
-        .range-track {
-            position: absolute;
-            height: 5px;
-            background: #ddd;
-            top: 7px;
-            width: 100%;
-            border-radius: 3px;
-            z-index: 1;
-        }
-        .range-fill {
-            position: absolute;
-            height: 5px;
-            background: #4CAF50;
-            top: 7px;
-            border-radius: 3px;
-            z-index: 1;
-        }
-        .slider-values {
-            display: flex;
-            justify-content: space-between;
-            width: 200px;
-            margin-top: 5px;
-        }
-        .slider-values span {
-            min-width: 40px;
-            text-align: center;
-            font-size: 14px;
-        }
-        .heatmap-scale {
-            display: flex;
-            width: 200px;
-            height: 20px;
-            margin-top: 10px;
-        }
-        .heatmap-scale div {
-            flex: 1;
-        }
-        progress {
-            width: 100%;
-            height: 20px;
         }
     </style>
 </head>
@@ -186,19 +106,10 @@
             <input type="number" id="beds" name="beds" min="0" required><br>
             <label for="amenities">Amenities (comma-separated):</label>
             <textarea id="amenities" name="amenities" required></textarea><br>
-            <label for="nights_range">Nights Range (1-365):</label>
-            <div class="slider-container">
-                <div class="range-slider">
-                    <div class="range-track"></div>
-                    <div class="range-fill" id="range_fill"></div>
-                    <input type="range" id="min_nights" min="1" max="365" value="1">
-                    <input type="range" id="max_nights" min="1" max="365" value="365">
-                </div>
-                <div class="slider-values">
-                    <span id="min_nights_value">1</span>
-                    <span id="max_nights_value">365</span>
-                </div>
-            </div>
+            <label for="min_nights">Min Nights:</label>
+            <input type="number" id="min_nights" name="min_nights" min="1" max="365" required><br>
+            <label for="max_nights">Max Nights:</label>
+            <input type="number" id="max_nights" name="max_nights" min="1" max="365" required><br>
         </form>
         <h2>Select Your Location</h2>
         <div id="map"></div>
@@ -207,16 +118,14 @@
         <button id="proceed">Proceed</button>
     </div>
     <div id="loading">
-        <p>Computing recommendations...</p>
-        <progress id="progress-bar" value="0" max="100"></progress>
-        <p id="time-remaining"></p>
+        <p>Computing recommendations... <span id="time-remaining"></span></p>
     </div>
     <div id="results">
         <h2>Recommended Price Range</h2>
         <p id="recommendation"></p>
         <h3>Top 5 Similar Listings and Nearest POIs</h3>
         <div id="result-map"></div>
-        <h3>Top 20 Similar Listings</h3>
+        <h3>Top 10 Similar Listings</h3>
         <table id="top-listings-table">
             <thead>
                 <tr>
@@ -230,13 +139,9 @@
         </table>
         <button id="back">Back</button>
         <button id="download">Download Full Ranking</button>
-        <button id="show-heatmap">Show Price Heatmap</button>
-        <div id="heatmap-map"></div>
-        <div id="heatmap-scale" class="heatmap-scale"></div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.heat/0.2.0/leaflet-heat.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.0/papaparse.min.js"></script>
     <script>
         // Global variables
@@ -248,8 +153,6 @@
         let userLocation = null;
         let marker = null;
         let resultMap = null;
-        let heatmapMap = null;
-        let progressInterval = null;
 
         // Load data from CSV files
         Papa.parse('data/osm_nodes.csv', {
@@ -278,14 +181,14 @@
                     listing.min_nights = parseInt(listing.minimum_nights);
                     listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
-                }).filter(l => !isNaN(l.price));
-                uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))].sort();
-                uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))].sort();
+                });
+                uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
+                uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
                 populateDropdowns();
             },
             error: function(error) {
                 console.error('Error loading airbnb_nyc.csv:', error);
-                alert('Failed to load listings data.');
+                alert('Failed to load Airbnb listings data.');
             }
         });
 
@@ -316,7 +219,6 @@
         // Generate sliders for POI importance
         function generatePoiSliders() {
             const slidersDiv = document.getElementById('poi-sliders');
-            slidersDiv.innerHTML = ''; // Clear any existing content
             uniquePoiTypes.forEach(type => {
                 const label = document.createElement('label');
                 label.textContent = type;
@@ -331,41 +233,6 @@
                 slidersDiv.appendChild(slider);
             });
         }
-
-        // Setup double-slider for nights range
-        const minNightsSlider = document.getElementById('min_nights');
-        const maxNightsSlider = document.getElementById('max_nights');
-        const minNightsValue = document.getElementById('min_nights_value');
-        const maxNightsValue = document.getElementById('max_nights_value');
-        const rangeFill = document.getElementById('range_fill');
-
-        function updateRangeFill() {
-            const min = parseInt(minNightsSlider.value);
-            const max = parseInt(maxNightsSlider.value);
-            const minPercent = ((min - 1) / 364) * 100;
-            const maxPercent = ((max - 1) / 364) * 100;
-            rangeFill.style.left = `${minPercent}%`;
-            rangeFill.style.width = `${maxPercent - minPercent}%`;
-            minNightsValue.textContent = min;
-            maxNightsValue.textContent = max;
-        }
-
-        minNightsSlider.addEventListener('input', function() {
-            if (parseInt(this.value) > parseInt(maxNightsSlider.value)) {
-                this.value = maxNightsSlider.value;
-            }
-            updateRangeFill();
-        });
-
-        maxNightsSlider.addEventListener('input', function() {
-            if (parseInt(this.value) < parseInt(minNightsSlider.value)) {
-                this.value = minNightsSlider.value;
-            }
-            updateRangeFill();
-        });
-
-        // Initialize range fill
-        updateRangeFill();
 
         // Initialize interactive map
         const map = L.map('map').setView([40.7128, -74.0060], 12); // Center on NYC
@@ -395,7 +262,6 @@
             }
             document.getElementById('input-section').style.display = 'none';
             document.getElementById('loading').style.display = 'block';
-            startProgressBar();
             setTimeout(computeRecommendation, 100); // Allow UI to update
         });
 
@@ -403,52 +269,13 @@
         document.getElementById('back').addEventListener('click', function() {
             document.getElementById('results').style.display = 'none';
             document.getElementById('input-section').style.display = 'block';
-            document.getElementById('heatmap-map').style.display = 'none';
-            clearInterval(progressInterval);
         });
-
-        // Handle download button click
-        document.getElementById('download').addEventListener('click', function() {
-            const csvContent = generateCsvContent();
-            const blob = new Blob([csvContent], { type: 'text/csv' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = 'top_listings_with_poi_metrics.csv';
-            a.click();
-            URL.revokeObjectURL(url);
-        });
-
-        // Handle heatmap toggle
-        document.getElementById('show-heatmap').addEventListener('click', function() {
-            const heatmapDiv = document.getElementById('heatmap-map');
-            heatmapDiv.style.display = heatmapDiv.style.display === 'none' ? 'block' : 'none';
-        });
-
-        // Start progress bar
-        function startProgressBar() {
-            const progressBar = document.getElementById('progress-bar');
-            const timeRemainingText = document.getElementById('time-remaining');
-            const estimatedTime = parseFloat(estimateComputationTime(airbnbListings.length, osmNodes.length)) * 1000; // Convert to ms
-            let elapsed = 0;
-            progressBar.max = estimatedTime;
-            progressBar.value = 0;
-
-            clearInterval(progressInterval); // Clear any existing interval
-            progressInterval = setInterval(() => {
-                elapsed += 1000;
-                progressBar.value = elapsed;
-                const remaining = Math.max(0, (estimatedTime - elapsed) / 1000).toFixed(1);
-                timeRemainingText.textContent = `Estimated time remaining: ${remaining} seconds`;
-                if (elapsed >= estimatedTime) {
-                    clearInterval(progressInterval);
-                }
-            }, 1000);
-        }
 
         // Compute price recommendation
         function computeRecommendation() {
             const startTime = performance.now();
+            const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
+            updateTimeRemaining(timeEstimate);
 
             // Collect user input
             const propertyType = document.getElementById('property_type').value;
@@ -458,8 +285,8 @@
             const bedrooms = parseInt(document.getElementById('bedrooms').value);
             const beds = parseInt(document.getElementById('beds').value);
             const amenities = document.getElementById('amenities').value.split(',').map(a => normalizeAmenity(a.trim()));
-            const minNights = parseInt(minNightsSlider.value);
-            const maxNights = parseInt(maxNightsSlider.value);
+            const minNights = parseInt(document.getElementById('min_nights').value);
+            const maxNights = parseInt(document.getElementById('max_nights').value);
             const lat = userLocation.lat;
             const lon = userLocation.lng;
 
@@ -483,6 +310,8 @@
                 lon: lon
             };
 
+            const topNVector = 500; // Top 500 in vector similarity phase
+            const topNPoi = 100; // Top 100 in POI similarity phase
             const radius = 8046.72; // 5 miles in meters for POI computation
 
             // Filter listings within 3 miles (4828 meters)
@@ -495,22 +324,21 @@
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('results').style.display = 'block';
                 document.getElementById('recommendation').textContent = 'No similar listings found within 3 miles.';
-                clearInterval(progressInterval);
                 return;
             }
 
-            const similarListings = findSimilarListings(userListing, nearbyListings);
+            const similarListings = findSimilarListings(userListing, nearbyListings, topNVector);
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
 
-            // Select top 200 based on POI scores for final price calculation
+            // Select top 100 based on POI scores
             const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
             rankedListings.sort((a, b) => b.score - a.score);
-            const top200Listings = rankedListings.slice(0, 200);
+            const top100Listings = rankedListings.slice(0, topNPoi);
 
-            // Compute weighted average price with distance emphasis
-            const recommendedPrice = computeWeightedAveragePrice(top200Listings.map(r => r.listing), top200Listings.map(r => r.score), lat, lon);
-            const prices = top200Listings.map(r => r.listing.price);
+            // Compute weighted average price using top 100
+            const recommendedPrice = computeWeightedAveragePrice(top100Listings.map(r => r.listing), top100Listings.map(r => r.score));
+            const prices = top100Listings.map(r => r.listing.price);
             const minPrice = Math.min(...prices);
             const maxPrice = Math.max(...prices);
 
@@ -529,7 +357,6 @@
             document.getElementById('results').style.display = 'block';
             document.getElementById('recommendation').textContent = 
                 `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})`;
-            clearInterval(progressInterval);
 
             // Initialize result map
             if (!resultMap) {
@@ -581,11 +408,13 @@
                                 closestPoi = poi;
                             }
                         });
+                        // Add solid line to closest POI
                         L.polyline([[listingLat, listingLon], closestPoi], {
                             color: 'blue',
                             weight: 2,
                             opacity: 0.5
                         }).addTo(resultMap);
+                        // Add dot for POI
                         L.circleMarker(closestPoi, {
                             radius: 3,
                             color: 'black',
@@ -596,10 +425,10 @@
                 });
             });
 
-            // Populate table with top 20 listings
+            // Populate table with top 10 listings
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
-            rankedListings.slice(0, 20).forEach(r => {
+            rankedListings.slice(0, 10).forEach(r => {
                 const distance = haversineDistance(lat, lon, r.listing.latitude, r.listing.longitude) / 1609.34; // Convert to miles
                 const row = document.createElement('tr');
                 row.innerHTML = `
@@ -610,91 +439,26 @@
                 `;
                 tableBody.appendChild(row);
             });
-
-            // Initialize heatmap map
-            setTimeout(() => {
-                if (!heatmapMap) {
-                    try {
-                        heatmapMap = L.map('heatmap-map').setView([lat, lon], 12);
-                        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                        }).addTo(heatmapMap);
-
-                        const maxPrice = Math.max(...airbnbListings.map(l => l.price));
-                        const heatData = airbnbListings.map(listing => [
-                            listing.latitude,
-                            listing.longitude,
-                            listing.price / maxPrice // Normalize to 0-1
-                        ]);
-
-                        L.heatLayer(heatData, {
-                            radius: 25,
-                            blur: 15,
-                            maxZoom: 17,
-                            gradient: { 0.4: 'blue', 0.65: 'yellow', 1: 'red' }
-                        }).addTo(heatmapMap);
-
-                        // Create heatmap scale
-                        const scale = document.getElementById('heatmap-scale');
-                        scale.innerHTML = '';
-                        const colors = ['blue', 'yellow', 'red'];
-                        colors.forEach(color => {
-                            const div = document.createElement('div');
-                            div.style.backgroundColor = color;
-                            scale.appendChild(div);
-                        });
-                        scale.insertAdjacentHTML('afterend', `<p>Price: $0 - $${maxPrice.toFixed(2)}</p>`);
-                    } catch (e) {
-                        console.error('Error initializing heatmap:', e);
-                    }
-                }
-            }, 100);
-
-            // Store top 200 for download
-            window.top200Listings = top200Listings;
-        }
-
-        // Generate CSV content for download
-        function generateCsvContent() {
-            const headers = ['id', 'property_type', 'room_type', 'accommodates', 'bathrooms', 'bedrooms', 'beds', 'price', 'latitude', 'longitude'];
-            uniquePoiTypes.forEach(type => {
-                headers.push(`min_distance_to_${type}`, `count_within_5mi_${type}`);
-            });
-            let csv = headers.join(',') + '\n';
-            window.top200Listings.forEach(r => {
-                const row = [
-                    r.listing.id,
-                    r.listing.property_type,
-                    r.listing.room_type,
-                    r.listing.accommodates,
-                    r.listing.bathrooms,
-                    r.listing.bedrooms,
-                    r.listing.beds,
-                    r.listing.price,
-                    r.listing.latitude,
-                    r.listing.longitude
-                ];
-                uniquePoiTypes.forEach(type => {
-                    row.push(r.metrics[type].minDistance.toFixed(2));
-                    row.push(r.metrics[type].countWithinRadius);
-                });
-                csv += row.join(',') + '\n';
-            });
-            return csv;
         }
 
         // Estimate computation time
         function estimateComputationTime(numListings, numNodes) {
-            const timePerListing = 0.0005;
-            const timePerNode = 0.00001;
+            const timePerListing = 0.0005; // seconds per listing
+            const timePerNode = 0.00001; // seconds per node
             return (numListings * timePerListing + numListings * numNodes * timePerNode).toFixed(2);
         }
 
-        // Find similar listings with heavy distance weighting
-        function findSimilarListings(userListing, airbnbListings) {
+        // Update time remaining display
+        function updateTimeRemaining(estimate) {
+            document.getElementById('time-remaining').textContent = `Estimated time remaining: ${estimate} seconds`;
+        }
+
+        // Find similar listings
+        function findSimilarListings(userListing, airbnbListings, topN) {
+            const sigma = 1000; // Distance decay parameter in meters
             const similarities = airbnbListings.map(listing => {
-                const propertyTypeSimilarity = stringSimilarity(userListing.property_type, listing.property_type);
-                const roomTypeSimilarity = stringSimilarity(userListing.room_type, listing.room_type);
+                const propertyTypeMatch = userListing.property_type === listing.property_type ? 1 : 0;
+                const roomTypeMatch = userListing.room_type === listing.room_type ? 1 : 0;
                 const accommodatesDiff = Math.abs(userListing.accommodates - listing.accommodates);
                 const bathroomsDiff = Math.abs(userListing.bathrooms - listing.bathrooms);
                 const bedroomsDiff = Math.abs(userListing.bedrooms - listing.bedrooms);
@@ -703,39 +467,25 @@
                 const maxNightsDiff = Math.abs(userListing.max_nights - listing.max_nights);
                 const amenitiesSimilarity = jaccardSimilarity(userListing.amenities, listing.amenities);
                 const distance = haversineDistance(userListing.lat, userListing.lon, listing.latitude, listing.longitude);
+                const distanceSimilarity = Math.exp(-distance / sigma);
 
-                const baseSimilarity = 
-                    2 * propertyTypeSimilarity + 
-                    2 * roomTypeSimilarity +
+                const similarity = 
+                    2 * propertyTypeMatch + 
+                    2 * roomTypeMatch +
                     1 / (1 + accommodatesDiff) + 
                     1 / (1 + bathroomsDiff) +
                     1 / (1 + bedroomsDiff) + 
                     1 / (1 + bedsDiff) +
                     1 / (1 + minNightsDiff) +
                     1 / (1 + maxNightsDiff) +
-                    1 * amenitiesSimilarity;
-
-                const similarity = baseSimilarity * (1 / (1 + distance / 100)); // Heavily weigh closer distances
+                    1 * amenitiesSimilarity + 
+                    2 * distanceSimilarity;
 
                 return { listing, similarity };
             });
 
             similarities.sort((a, b) => b.similarity - a.similarity);
-            return similarities.map(s => s.listing);
-        }
-
-        // Simple string similarity (Levenshtein distance approximation)
-        function stringSimilarity(str1, str2) {
-            str1 = str1.toLowerCase();
-            str2 = str2.toLowerCase();
-            if (str1 === str2) return 1;
-            const len1 = str1.length, len2 = str2.length;
-            const maxLen = Math.max(len1, len2);
-            let common = 0;
-            for (let i = 0; i < Math.min(len1, len2); i++) {
-                if (str1[i] === str2[i]) common++;
-            }
-            return common / maxLen;
+            return similarities.slice(0, topN).map(s => s.listing);
         }
 
         // Jaccard similarity for amenities
@@ -817,16 +567,13 @@
             });
         }
 
-        // Compute weighted average price with distance emphasis
-        function computeWeightedAveragePrice(listings, scores, userLat, userLon) {
+        // Compute weighted average price
+        function computeWeightedAveragePrice(listings, scores) {
             let total = 0;
             let weightSum = 0;
             listings.forEach((listing, i) => {
-                const distance = haversineDistance(userLat, userLon, listing.latitude, listing.longitude);
-                const distanceWeight = Math.exp(-distance / 500); // Sharp decay at 500 meters
-                const weightedScore = scores[i] * distanceWeight;
-                total += weightedScore * listing.price;
-                weightSum += weightedScore;
+                total += scores[i] * listing.price;
+                weightSum += scores[i];
             });
             return weightSum > 0 ? total / weightSum : 0;
         }
