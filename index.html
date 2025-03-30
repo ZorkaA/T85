@@ -5,99 +5,168 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Listing Price Recommendation</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
     <style>
         body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
+            font-family: 'Roboto', sans-serif;
+            margin: 0;
+            padding: 40px;
+            background-color: #f7f9fc;
+            color: #333;
         }
-        #map {
-            height: 400px;
-            width: 100%;
-            border: 1px solid #ccc;
+        h1 {
+            font-size: 2.5em;
+            color: #2c3e50;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        h2 {
+            font-size: 1.8em;
+            color: #34495e;
+            margin-top: 40px;
+            margin-bottom: 20px;
+        }
+        h3 {
+            font-size: 1.4em;
+            color: #34495e;
+            margin-top: 30px;
+        }
+        #input-section, #results {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: #fff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
         }
         #input-section {
-            max-width: 800px;
-            margin-bottom: 20px;
+            margin-bottom: 40px;
         }
         #loading {
             display: none;
             text-align: center;
             padding: 20px;
-        }
-        #results {
-            display: none;
             max-width: 1000px;
-            padding: 20px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-            overflow-x: auto;
+            margin: 0 auto;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+        #map, #result-map {
+            height: 400px;
+            width: 100%;
+            border-radius: 8px;
+            border: 1px solid #ddd;
+        }
+        #result-map {
+            height: 500px;
         }
         form label {
             display: inline-block;
-            width: 150px;
-            margin: 10px 0;
+            width: 160px;
+            margin: 12px 0;
+            font-weight: 700;
+            color: #2c3e50;
         }
         form select, form input[type="number"], form textarea {
-            width: 200px;
-            padding: 5px;
+            width: 240px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            font-size: 1em;
+            background: #f9f9f9;
+            transition: border-color 0.3s;
+        }
+        form select:focus, form input[type="number"]:focus, form textarea:focus {
+            border-color: #3498db;
+            outline: none;
         }
         form textarea {
             height: 100px;
             vertical-align: top;
+            resize: vertical;
         }
         #poi-sliders {
             display: grid;
             grid-template-columns: 200px 200px;
-            gap: 10px;
+            gap: 15px;
+            margin-top: 20px;
         }
         #poi-sliders label {
             width: 200px;
+            font-weight: 700;
+            color: #2c3e50;
         }
         #poi-sliders input[type="range"] {
             width: 200px;
+            accent-color: #3498db;
         }
         button {
-            padding: 10px 20px;
-            background-color: #4CAF50;
+            padding: 12px 24px;
+            background-color: #3498db;
             color: white;
             border: none;
+            border-radius: 6px;
+            font-size: 1em;
             cursor: pointer;
-            margin-right: 10px;
+            transition: background-color 0.3s;
+            margin-top: 20px;
         }
         button:hover {
-            background-color: #45a049;
+            background-color: #2980b9;
         }
-        #result-map {
-            height: 500px;
+        #loading p {
+            font-size: 1.2em;
+            color: #34495e;
+            margin-bottom: 15px;
+        }
+        #loading-bar {
             width: 100%;
-            margin-top: 20px;
-            border: 1px solid #ccc;
+            height: 20px;
+            background-color: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        #loading-progress {
+            height: 100%;
+            background-color: #3498db;
+            width: 0%;
+            transition: width 0.1s;
+        }
+        #results {
+            display: none;
+        }
+        #recommendation {
+            font-size: 1.2em;
+            color: #2c3e50;
+            margin: 20px 0;
+            padding: 15px;
+            background: #ecf0f1;
+            border-radius: 6px;
         }
         table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
-            min-width: 600px;
-        }
-        table, th, td {
-            border: 1px solid #ccc;
+            background: #fff;
+            border-radius: 6px;
+            overflow: hidden;
         }
         th, td {
-            padding: 8px;
+            padding: 12px 15px;
             text-align: left;
+            border-bottom: 1px solid #ddd;
         }
-        #loading-bar {
-            width: 100%;
-            height: 20px;
-            background-color: #f0f0f0;
-            border: 1px solid #ccc;
-            margin-top: 10px;
+        th {
+            background-color: #34495e;
+            color: white;
+            font-weight: 700;
         }
-        #loading-progress {
-            height: 100%;
-            background-color: #4CAF50;
-            width: 0%;
-            transition: width 0.1s;
+        tr:nth-child(even) {
+            background-color: #f9f9f9;
+        }
+        tr:hover {
+            background-color: #ecf0f1;
         }
     </style>
 </head>
@@ -154,6 +223,7 @@
                     <th>Bedrooms</th>
                     <th>Beds</th>
                     <th>Price</th>
+                    <th>Distance (mi)</th>
                 </tr>
             </thead>
             <tbody></tbody>
@@ -202,7 +272,7 @@
                     listing.min_nights = parseInt(listing.minimum_nights);
                     listing.max_nights = parseInt(listing.maximum_nights);
                     return listing;
-                }).filter(listing => !isNaN(listing.price)); // Filter out invalid prices
+                }).filter(listing => !isNaN(listing.price));
                 uniquePropertyTypes = [...new Set(airbnbListings.map(l => l.property_type))];
                 uniqueRoomTypes = [...new Set(airbnbListings.map(l => l.room_type))];
                 populateDropdowns();
@@ -256,7 +326,7 @@
         }
 
         // Initialize interactive map
-        const map = L.map('map').setView([40.7128, -74.0060], 12); // Center on NYC
+        const map = L.map('map').setView([40.7128, -74.0060], 12);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
         }).addTo(map);
@@ -310,7 +380,7 @@
             const timeEstimate = estimateComputationTime(airbnbListings.length, osmNodes.length);
             updateTimeRemaining(timeEstimate);
 
-            const totalSteps = 4; // Number of main computation steps
+            const totalSteps = 4;
             let currentStep = 0;
 
             function updateLoadingBar() {
@@ -354,20 +424,19 @@
                 lon: lon
             };
 
-            const topNVector = 500; // Top 500 in vector similarity phase
-            const topNPoi = 100; // Top 100 in POI similarity phase
-            const radius = 8046.72; // 5 miles in meters
+            const topNVector = 500;
+            const topNPoi = 100;
+            const radius = 8046.72;
 
-            updateLoadingBar(); // Step 1: Collect input
+            updateLoadingBar();
 
             const similarListings = findSimilarListings(userListing, airbnbListings, topNVector);
-            updateLoadingBar(); // Step 2: Find similar listings
+            updateLoadingBar();
 
             const poiMetrics = computePoiMetrics(similarListings, osmNodes, uniquePoiTypes, radius);
             const scores = computeScores(poiMetrics, poiRatings);
-            updateLoadingBar(); // Step 3: Compute POI metrics and scores
+            updateLoadingBar();
 
-            // Select top listings, handling NaN prices
             const rankedListings = similarListings.map((listing, i) => ({ listing, score: scores[i], metrics: poiMetrics[i].metrics }));
             rankedListings.sort((a, b) => b.score - a.score);
             let topListings = [];
@@ -384,7 +453,6 @@
             }
             const top100Listings = topListings.slice(0, topNPoi);
 
-            // Compute weighted average price using top listings
             const prices = top100Listings.map(r => r.listing.price);
             let recommendedPrice, minPrice, maxPrice;
             if (prices.length > 0) {
@@ -395,26 +463,22 @@
                 recommendedPrice = minPrice = maxPrice = null;
             }
 
-            // Get top 10 for visualization
             const top10Listings = topListings.slice(0, 10).map(r => r.listing);
 
-            // Get top 5 most important POI types
             const top5PoiTypes = uniquePoiTypes
                 .map(type => ({ type, rating: poiRatings[type] }))
                 .sort((a, b) => b.rating - a.rating)
                 .slice(0, 5)
                 .map(t => t.type);
 
-            updateLoadingBar(); // Step 4: Final calculations
+            updateLoadingBar();
 
-            // Display results
             document.getElementById('loading').style.display = 'none';
             document.getElementById('results').style.display = 'block';
             document.getElementById('recommendation').textContent = prices.length > 0 ?
                 `Recommended Price: $${recommendedPrice.toFixed(2)} (Range: $${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)})` :
                 'No valid similar listings found within 3 miles.';
 
-            // Initialize result map
             if (!resultMap) {
                 resultMap = L.map('result-map').setView([lat, lon], 13);
                 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -422,17 +486,14 @@
                 }).addTo(resultMap);
             }
 
-            // Clear previous layers
             resultMap.eachLayer(layer => {
                 if (layer instanceof L.Marker || layer instanceof L.Polyline || layer instanceof L.CircleMarker) {
                     resultMap.removeLayer(layer);
                 }
             });
 
-            // Add user location marker (traditional pin)
             L.marker([lat, lon], { title: 'Your Location' }).addTo(resultMap);
 
-            // Add top 10 listings markers (red dots) and lines
             top10Listings.forEach(listing => {
                 const listingLat = listing.latitude;
                 const listingLon = listing.longitude;
@@ -444,14 +505,12 @@
                     title: 'Similar Listing'
                 }).addTo(resultMap);
 
-                // Add solid line to user location
                 L.polyline([[lat, lon], [listingLat, listingLon]], {
                     color: 'blue',
                     weight: 3,
                     opacity: 0.7
                 }).addTo(resultMap);
 
-                // Add solid lines to closest POIs of top 5 types
                 top5PoiTypes.forEach(type => {
                     const pois = osmNodes.filter(node => node.nodetype === type)
                         .map(node => [parseFloat(node.lat), parseFloat(node.lon)]);
@@ -465,13 +524,11 @@
                                 closestPoi = poi;
                             }
                         });
-                        // Add solid line to closest POI
                         L.polyline([[listingLat, listingLon], closestPoi], {
                             color: 'blue',
                             weight: 2,
                             opacity: 0.5
                         }).addTo(resultMap);
-                        // Add dot for POI
                         L.circleMarker(closestPoi, {
                             radius: 3,
                             color: 'black',
@@ -482,10 +539,10 @@
                 });
             });
 
-            // Populate table with top 10 listings (no lat/lon)
             const tableBody = document.querySelector('#top-listings-table tbody');
             tableBody.innerHTML = '';
             topListings.slice(0, 10).forEach(r => {
+                const distanceMiles = haversineDistance(lat, lon, r.listing.latitude, r.listing.longitude) / 1609.34; // Convert meters to miles
                 const row = document.createElement('tr');
                 row.innerHTML = `
                     <td>${r.listing.id}</td>
@@ -496,11 +553,11 @@
                     <td>${r.listing.bedrooms}</td>
                     <td>${r.listing.beds}</td>
                     <td>$${r.listing.price.toFixed(2)}</td>
+                    <td>${distanceMiles.toFixed(2)}</td>
                 `;
                 tableBody.appendChild(row);
             });
 
-            // Store top 100 for download
             window.top100Listings = top100Listings;
         }
 
@@ -535,8 +592,8 @@
 
         // Estimate computation time
         function estimateComputationTime(numListings, numNodes) {
-            const timePerListing = 0.0005; // seconds per listing
-            const timePerNode = 0.00001; // seconds per node
+            const timePerListing = 0.0005;
+            const timePerNode = 0.00001;
             return (numListings * timePerListing + numListings * numNodes * timePerNode).toFixed(2);
         }
 
@@ -547,8 +604,8 @@
 
         // Find similar listings within 3 miles
         function findSimilarListings(userListing, airbnbListings, topN) {
-            const maxDistance = 4828.03; // 3 miles in meters
-            const sigma = 1000; // Distance decay parameter in meters
+            const maxDistance = 4828.03;
+            const sigma = 1000;
             const nearbyListings = airbnbListings.filter(listing => {
                 const distance = haversineDistance(userListing.lat, userListing.lon, listing.latitude, listing.longitude);
                 return distance <= maxDistance;
@@ -595,7 +652,7 @@
 
         // Haversine distance
         function haversineDistance(lat1, lon1, lat2, lon2) {
-            const R = 6371000; // Earth radius in meters
+            const R = 6371000;
             const phi1 = lat1 * Math.PI / 180;
             const phi2 = lat2 * Math.PI / 180;
             const deltaPhi = (lat2 - lat1) * Math.PI / 180;
@@ -656,9 +713,9 @@
                     const { minDistance, countWithinRadius } = m.metrics[type];
                     const { minDist, maxDist, minCount, maxCount } = typeMetrics[type];
                     let normDistance = maxDist > minDist ? 
-                        (maxDist - minDistance) / (maxDist - minDist) : 1; // Less distance is better
+                        (maxDist - minDistance) / (maxDist - minDist) : 1;
                     let normCount = maxCount > minCount ? 
-                        (countWithinRadius - minCount) / (maxCount - minCount) : 1; // More quantity is better
+                        (countWithinRadius - minCount) / (maxCount - minCount) : 1;
                     score += poiRatings[type] * (normDistance + normCount);
                 });
                 return score;
@@ -678,10 +735,10 @@
 
         // Demo feature: Randomize sliders on 'demo' in console
         window.addEventListener('keydown', function(event) {
-            if (event.key === 'd' && event.ctrlKey) { // Ctrl+D as a proxy for console command
+            if (event.key === 'd' && event.ctrlKey) {
                 if (prompt('Type "demo" to randomize sliders:') === 'demo') {
                     document.querySelectorAll('#poi-sliders input[type="range"]').forEach(slider => {
-                        slider.value = Math.floor(Math.random() * 11); // Random 0-10
+                        slider.value = Math.floor(Math.random() * 11);
                     });
                     console.log('Sliders randomized for demo.');
                 }
