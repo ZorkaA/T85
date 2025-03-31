@@ -17,6 +17,12 @@
         h1 {
             font-size: 2.5em;
             color: #2c3e50;
+            margin-bottom: 10px; /* Reduced to bring subtitle closer */
+            text-align: center;
+        }
+        #subtitle {
+            font-size: 1.2em;
+            color: #34495e;
             margin-bottom: 30px;
             text-align: center;
         }
@@ -31,6 +37,7 @@
             color: #34495e;
             margin-top: 30px;
         }
+        /* Remaining styles unchanged */
         #input-section, #results {
             max-width: 1000px;
             margin: 0 auto;
@@ -209,7 +216,7 @@
 </head>
 <body>
     <h1>OREMA</h1>
-    <p>One-Stop Real Estate Market Analyzer</p>
+    <p id="subtitle">One-Stop Real Estate Market Analyzer</p>
     <div id="input-section">
         <h2>Enter Your Listing Details</h2>
         <form id="listing-form">
